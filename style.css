@@ -26,3 +26,7 @@ main { padding:1.5rem; display:grid; gap:1rem; align-content:start; }
 .bar { height:8px; background:#1e293b; border-radius:99px; overflow:hidden; } .bar i { display:block; height:100%; background:var(--acc); }
 table { width:100%; border-collapse:collapse; } td,th { padding:.5rem; border-top:1px solid var(--line); text-align:left; }
 @media (max-width:760px) { .layout { grid-template-columns:1fr; } aside { flex-direction:row; flex-wrap:wrap; } }
+.photos { display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:.5rem; }
+.photos img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px; border:3px solid transparent; cursor:pointer; background:#1e293b; }
+.photos img.sel { border-color:var(--acc); }
+.avatar { width:84px; height:84px; border-radius:50%; object-fit:cover; background:#1e293b; }

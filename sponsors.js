@@ -38,6 +38,8 @@ const OBJECTIVES = {
   },
 };
 
+const s_isGearOnly = (x) => !!x.sponsors_catalog?.is_team_sponsor && !x.slot_type.startsWith('TITLE_');
+
 function evaluateContract(contract, ctx) {
   const items = (contract.objectives || []).map((o) => {
     const def = OBJECTIVES[o.type];
@@ -95,14 +97,17 @@ async function renderSponsors(c) {
   const visible = ctx.catalog.filter((s) => !conti || s.grade === 2);
   const localExists = visible.some((s) => s.is_team_sponsor && s.country_code === t.nationality);
   const myRegion = ctx.countries.find((x) => x.code === t.nationality)?.region;
-  const offers = visible.filter((s) => !s.is_team_sponsor || s.country_code === t.nationality || (!localExists && s.region === myRegion))
+  const titleOk = (s) => s.country_code === t.nationality || (!localExists && s.region === myRegion);
+  // les cadres à double rôle restent visibles pour tous : ils peuvent être signés comme simple équipementier
+  const offers = visible.filter((s) => !s.is_team_sponsor || titleOk(s) || s.gear_slot === 'FRAME')
     .sort((a, b) => Number(b.budget_amount) - Number(a.budget_amount));
 
-  const lockReason = (s) => {
+  const lockReason = (s, gearOnly = false) => {
     if (owned.has(s.id)) return 'Déjà sous contrat';
     if (s.gear_slot && taken.has(s.gear_slot)) return `Slot ${GEAR_LABELS[s.gear_slot]} déjà occupé`;
-    if (s.is_team_sponsor && s.gear_slot && taken.has('TITLE_2')) return 'Exige le slot Titre 2, déjà occupé';
-    if (s.is_team_sponsor && !s.gear_slot && !titleSlots.some((k) => !taken.has(k))) return 'Slots titres complets';
+    if (gearOnly || !s.is_team_sponsor) return null;
+    if (s.gear_slot && taken.has('TITLE_2')) return 'Exige le slot Titre 2, déjà occupé';
+    if (!s.gear_slot && !titleSlots.some((k) => !taken.has(k))) return 'Slots titres complets';
     return null;
   };
 
@@ -113,18 +118,30 @@ async function renderSponsors(c) {
   const money = (s) => `${s.free_gear ? 'Matériel gratuit + ' : ''}${fmtEUR(s.budget_amount || 0)} / an`;
 
   const contractCard = (x) => {
-    const s = x.sponsors_catalog, ev = evaluateContract(x, ctx), cls = ev.sat >= 70 ? 'ok' : ev.sat >= 40 ? 'warn' : 'bad';
+    const s = x.sponsors_catalog, gearOnly = s_isGearOnly(x), ev = evaluateContract(x, ctx), cls = ev.sat >= 70 ? 'ok' : ev.sat >= 40 ? 'warn' : 'bad';
     return `<div class="card contract">
       <div class="head"><b>${esc(s.name)}</b><span class="muted">${slotLabel(x.slot_type)}${x.gear_slot ? ' + ' + GEAR_LABELS[x.gear_slot] : ''} · jusqu'en ${x.contract_end_year}</span></div>
       <div>${fmtEUR(x.monthly_payout)} / mois${s.free_gear ? ' · matériel gratuit' : ''}</div>
       <label>Satisfaction : ${ev.sat}%</label><div class="bar ${cls}"><i style="width:${ev.sat}%"></i></div>
       ${ev.sat < 40 ? '<span class="badge bad">Sous 40% : dotation réduite de 50%, risque de résiliation</span>' : ''}
       <ul class="req">${ev.items.map((i) => `<li class="${i.met ? 'ok' : i.pending ? '' : 'ko'}">${i.met ? '✅' : i.pending ? '⏳' : '❌'} ${esc(i.text)} <span class="muted">(${esc(i.detail)})</span></li>`).join('')}</ul>
-      ${s.objectives_description ? `<div class="muted">Contrat : ${esc(s.objectives_description)}</div>` : ''}
+      ${gearOnly ? '<span class="badge">Équipementier seul : sans exigence</span>' : s.objectives_description ? `<div class="muted">Contrat : ${esc(s.objectives_description)}</div>` : ''}
       <button class="danger" data-end="${x.id}">Rompre (pénalité ${fmtEUR(x.monthly_payout * 3)})</button></div>`;
   };
 
   const offerCard = (s) => {
+    const dualFrame = s.is_team_sponsor && s.gear_slot === 'FRAME';
+    const btn = (label, mode, why) => `<button data-sign="${s.id}" data-mode="${mode}" ${why ? 'disabled' : ''}>${label}</button>${why ? `<div class="muted">${esc(why)}</div>` : ''}`;
+    if (dualFrame) {
+      const titleWhy = lockReason(s) || (titleOk(s) ? null : 'Titre 2 réservé aux sponsors de votre pays');
+      return `<div class="card offer">
+        <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(s.country)} · grade ${s.grade}</span></div>
+        <span class="badge warn">Cadres : au choix équipementier ou Titre 2</span>
+        <ul class="kv"><li>🚲 Équipementier seul : matériel gratuit + ${fmtEUR(Number(s.budget_amount || 0) * 0.25)} / an, sans exigence</li>
+          <li>🏷️ Sponsor Titre 2 : ${money(s)}, son nom s'ajoute à celui de l'équipe</li><li>📅 ${s.contract_duration_years} an(s)</li></ul>
+        ${s.objectives_description ? `<div class="muted">Exigences (en Titre 2) : ${esc(s.objectives_description)}</div>` : ''}
+        ${btn('Signer comme équipementier', 'GEAR_ONLY', lockReason(s, true))}${btn('Signer comme sponsor Titre 2', 'TITLE', titleWhy)}</div>`;
+    }
     const why = lockReason(s);
     return `<div class="card offer">
       <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(s.country)} · grade ${s.grade}</span></div>
@@ -132,13 +149,14 @@ async function renderSponsors(c) {
       <ul class="kv"><li>💶 ${money(s)}</li><li>📅 ${s.contract_duration_years} an(s)</li></ul>
       ${s.objectives_description ? `<div class="muted">Exigences : ${esc(s.objectives_description)}</div>` : ''}
       ${s.is_team_sponsor && s.gear_slot ? '<div class="muted">Exige le slot Titre 2 : son nom s\'ajoute à celui de l\'équipe.</div>' : ''}
-      <button data-sign="${s.id}" ${why ? 'disabled' : ''}>Signer</button>${why ? `<div class="muted">${esc(why)}</div>` : ''}</div>`;
+      ${btn('Signer', 'TITLE', why)}</div>`;
   };
 
   const sections = [
     ['Sponsors titres', offers.filter((s) => s.is_team_sponsor && !s.gear_slot)],
-    ['Double rôle : Titre 2 + équipement exclusif', offers.filter((s) => s.is_team_sponsor && s.gear_slot)],
-    ...Object.keys(GEAR_LABELS).map((k) => [`Équipementier : ${GEAR_LABELS[k]}`, offers.filter((s) => !s.is_team_sponsor && s.gear_slot === k)]),
+    ['Double rôle : Titre 2 + équipement exclusif', offers.filter((s) => s.is_team_sponsor && s.gear_slot && s.gear_slot !== 'FRAME')],
+    ...Object.keys(GEAR_LABELS).map((k) => [`Équipementier : ${GEAR_LABELS[k]}`,
+      offers.filter((s) => s.gear_slot === k && (!s.is_team_sponsor || k === 'FRAME'))]),
   ];
 
   c.innerHTML = `
@@ -170,7 +188,7 @@ async function renderSponsors(c) {
     b.disabled = true;
     try {
       if (b.dataset.sign) {
-        const { error } = await sb.rpc('sign_sponsor', { p_sponsor: b.dataset.sign });
+        const { error } = await sb.rpc('sign_sponsor', { p_sponsor: b.dataset.sign, p_mode: b.dataset.mode || 'TITLE' });
         if (error) throw error;
       } else {
         const x = ctx.mine.find((m) => m.id === b.dataset.end);

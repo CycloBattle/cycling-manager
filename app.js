@@ -162,7 +162,7 @@ function viewGame() {
   $app.innerHTML = `
     <div class="layout">
       <aside>
-        <div class="brand"><img src="${esc(logoSrc(t))}" alt=""><div><b>${esc(t.name)}</b><div class="muted">${esc(NATS[t.nationality] || t.nationality)}</div></div></div>
+        <div class="brand"><img src="${esc(logoSrc(t))}" alt=""><div><b>${esc(t.official_name || t.name)}</b><div class="muted">${esc(NATS[t.nationality] || t.nationality)}</div></div></div>
         ${tabs.map(([k, l]) => `<button class="tab ${k === state.tab ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}
         <div style="flex:1"></div>
         <button class="link" id="out">Déconnexion</button>
@@ -191,6 +191,8 @@ async function renderTab() {
         <img class="avatar" src="${esc(avatarSrc(m))}" alt="">
         <div style="flex:1"><h3>Manager : ${esc(m.first_name)} ${esc(m.last_name)} (${m.age} ans, ${esc(NATS[m.nationality] || m.nationality)})</h3>
         ${attr('Réputation', m.reputation)}${attr('Pédagogie', m.pedagogy)}${attr('Négociation', m.negotiation)}</div></div>`;
+  } else if (state.tab === 'contracts') {
+    await renderSponsors(c);
   } else if (state.tab === 'ranking') {
     const { data } = await sb.from('teams').select('name, nationality, uci_points').order('uci_points', { ascending: false });
     c.innerHTML = `<h2>Classement UCI</h2><div class="card"><table>${(data || []).map((x, i) =>

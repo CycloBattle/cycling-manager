@@ -39,3 +39,4 @@ table { width:100%; border-collapse:collapse; } td,th { padding:.5rem; border-to
 .bar.ok i { background:#10b981; } .bar.warn i { background:#f59e0b; } .bar.bad i { background:#ef4444; }
 button.danger { background:#7f1d1d; color:#fecaca; }
 button:disabled { cursor:not-allowed; }
+.okmsg { color:#6ee7b7; } .badge.bad { background:#7f1d1d; color:#fecaca; }

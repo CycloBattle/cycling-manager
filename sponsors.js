@@ -124,7 +124,7 @@ async function renderSponsors(c) {
       <div>${fmtEUR(x.monthly_payout)} / mois${s.free_gear ? ' · matériel gratuit' : ''}</div>
       <label>Satisfaction : ${ev.sat}%</label><div class="bar ${cls}"><i style="width:${ev.sat}%"></i></div>
       ${ev.sat < 40 ? '<span class="badge bad">Sous 40% : dotation réduite de 50%, risque de résiliation</span>' : ''}
-      <ul class="req">${ev.items.map((i) => `<li class="${i.met ? 'ok' : i.pending ? '' : 'ko'}">${i.met ? '✅' : i.pending ? '⏳' : '❌'} ${esc(i.text)} <span class="muted">(${esc(i.detail)})</span></li>`).join('')}</ul>
+      <ul class="req">${ev.items.map((i) => `<li class="${i.met ? 'ok' : i.pending ? '' : 'ko'}">${i.met ? 'Atteint :' : i.pending ? 'En cours :' : 'Non atteint :'} ${esc(i.text)} <span class="muted">(${esc(i.detail)})</span></li>`).join('')}</ul>
       ${gearOnly ? '<span class="badge">Équipementier seul : sans exigence</span>' : s.objectives_description ? `<div class="muted">Contrat : ${esc(s.objectives_description)}</div>` : ''}
       <button class="danger" data-end="${x.id}">Rompre (pénalité ${fmtEUR(x.monthly_payout * 3)})</button></div>`;
   };
@@ -137,8 +137,8 @@ async function renderSponsors(c) {
       return `<div class="card offer">
         <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(s.country)} · grade ${s.grade}</span></div>
         <span class="badge warn">Cadres : au choix équipementier ou Titre 2</span>
-        <ul class="kv"><li>🚲 Équipementier seul : matériel gratuit + ${fmtEUR(Number(s.budget_amount || 0) * 0.25)} / an, sans exigence</li>
-          <li>🏷️ Sponsor Titre 2 : ${money(s)}, son nom s'ajoute à celui de l'équipe</li><li>📅 ${s.contract_duration_years} an(s)</li></ul>
+        <ul class="kv"><li> Équipementier seul : matériel gratuit + ${fmtEUR(Number(s.budget_amount || 0) * 0.25)} / an, sans exigence</li>
+          <li> Sponsor Titre 2 : ${money(s)}, son nom s'ajoute à celui de l'équipe</li><li> ${s.contract_duration_years} an(s)</li></ul>
         ${s.objectives_description ? `<div class="muted">Exigences (en Titre 2) : ${esc(s.objectives_description)}</div>` : ''}
         ${btn('Signer comme équipementier', 'GEAR_ONLY', lockReason(s, true))}${btn('Signer comme sponsor Titre 2', 'TITLE', titleWhy)}</div>`;
     }
@@ -146,7 +146,7 @@ async function renderSponsors(c) {
     return `<div class="card offer">
       <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(s.country)} · grade ${s.grade}</span></div>
       <span class="badge ${s.is_team_sponsor && s.gear_slot ? 'warn' : ''}">${esc(kind(s))}</span>
-      <ul class="kv"><li>💶 ${money(s)}</li><li>📅 ${s.contract_duration_years} an(s)</li></ul>
+      <ul class="kv"><li> ${money(s)}</li><li> ${s.contract_duration_years} an(s)</li></ul>
       ${s.objectives_description ? `<div class="muted">Exigences : ${esc(s.objectives_description)}</div>` : ''}
       ${s.is_team_sponsor && s.gear_slot ? '<div class="muted">Exige le slot Titre 2 : son nom s\'ajoute à celui de l\'équipe.</div>' : ''}
       ${btn('Signer', 'TITLE', why)}</div>`;
@@ -165,7 +165,7 @@ async function renderSponsors(c) {
       <div class="muted">Revenus sponsors : ${fmtEUR(monthly)} / mois · Budget : ${fmtEUR(t.budget)}${conti ? ' · Les sponsors de grade 1 ne négocient pas avec une équipe Conti-Pro' : ''}</div>
       <div class="err" id="sp-msg"></div></div>
     <div class="card"><h3>Projection du budget sur 12 mois</h3>
-      <div class="${firstNeg >= 0 ? 'err' : 'okmsg'}">${firstNeg >= 0 ? `⚠️ Déficit prévu dès ${p.labels[firstNeg]} : signez des sponsors ou réduisez les dépenses.` : '✅ Trésorerie positive sur 12 mois.'}</div>
+      <div class="${firstNeg >= 0 ? 'err' : 'okmsg'}">${firstNeg >= 0 ? ` Déficit prévu dès ${p.labels[firstNeg]} : signez des sponsors ou réduisez les dépenses.` : ' Trésorerie positive sur 12 mois.'}</div>
       <div class="muted">Revenus ${fmtEUR(p.income)}/mois · Salaires ${fmtEUR(p.payroll)}/mois · Maintenance ${fmtEUR(p.maint)}/mois · Courses ${fmtEUR(RACE_COST)} chacune. Primes non chiffrées dans le catalogue (0 pour l'instant).</div>
       ${typeof Chart === 'undefined' ? '<p class="err">Chart.js non chargé.</p>' : '<canvas id="proj" height="110"></canvas>'}</div>
     <h3>Contrats actifs</h3>

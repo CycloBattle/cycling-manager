@@ -1,9 +1,12 @@
-// sponsors.js — onglet Contrats & Sponsors (utilise sb, state, esc, fmtEUR, NATS, viewGame définis dans app.js)
-const SLOT_LABELS = { TITLE: 'Sponsors titres', NUTRITION: 'Nutrition', FRAME: 'Cadres', TRANSMISSION: 'Transmission',
-  WHEELS: 'Roues', TEXTILE: 'Tenues', HELMET_SHOES: 'Casques & chaussures' };
+// sponsors.js — Contrats & Sponsors + projection budgétaire
+// Utilise sb, state, esc, fmtEUR, NATS, $, viewGame (app.js) et Chart (Chart.js via CDN)
+const GEAR_LABELS = { FRAME: 'Cadres', WHEELS: 'Roues', GROUPS: 'Transmissions', WEAR: 'Tenues', HELMET: 'Casques & lunettes', NUTRITION: 'Nutrition' };
+const slotLabel = (k) => (k && k.startsWith('TITLE_') ? `Titre ${k.slice(-1)}` : GEAR_LABELS[k] || k);
+const RACE_COST = 4500;   // hypothèse : frais d'engagement + déplacement par course
+let sponsorChart = null;
 
-// Registre d'objectifs. Pour en créer un : ajoutez une entrée ici, puis utilisez son "type" dans sponsors.objectives (JSON).
-// check() renvoie { met, pending, score(0-100), detail }.
+// Registre d'objectifs : ajoutez une entrée ici + utilisez son "type" dans sponsors_catalog.objectives_json
+// check() renvoie { met, pending, score(0-100), detail }
 const OBJECTIVES = {
   NATIONALITY_QUOTA: {
     label: (o) => `Au moins ${o.min_pct}% de coureurs ${NATS[o.nationality] || o.nationality}`,
@@ -14,36 +17,23 @@ const OBJECTIVES = {
       return { met: score >= 100, pending: false, score, detail: `${pct}% actuellement` };
     },
   },
-  YOUNG_RIDERS: {
-    label: (o) => `Au moins ${o.min_count} coureurs de moins de ${o.max_age + 1} ans`,
+  VICTORIES_OR_PODIUMS: {
+    label: (o) => [o.min_wins > 0 && `${o.min_wins} victoire(s)`, o.min_podiums > 0 && `${o.min_podiums} podium(s)`].filter(Boolean).join(' + ') + ' cette saison',
+    check: (o, c) => {
+      const w = c.results.filter((r) => r.position === 1).length, p = c.results.filter((r) => r.position <= 3).length;
+      const parts = [];
+      if (o.min_wins > 0) parts.push(Math.min(1, w / o.min_wins));
+      if (o.min_podiums > 0) parts.push(Math.min(1, p / o.min_podiums));
+      const ratio = parts.length ? parts.reduce((a, b) => a + b, 0) / parts.length : 1;
+      return { met: ratio >= 1, pending: ratio < 1, score: Math.round(ratio * 100), detail: `${w} victoire(s), ${p} podium(s)` };
+    },
+  },
+  YOUTH_DEVELOPMENT: {
+    label: (o) => `Au moins ${o.min_count} coureurs U${o.max_age + 1}`,
     check: (o, c) => {
       const n = c.riders.filter((r) => r.age <= o.max_age).length;
       const score = Math.min(100, Math.round((n * 100) / o.min_count));
       return { met: n >= o.min_count, pending: false, score, detail: `${n}/${o.min_count}` };
-    },
-  },
-  WINS: {
-    label: (o) => `${o.min} victoire(s) cette saison`,
-    check: (o, c) => {
-      const w = c.results.filter((r) => r.position === 1).length;
-      return { met: w >= o.min, pending: w < o.min, score: w >= o.min ? 100 : 0, detail: `${w}/${o.min}` };
-    },
-  },
-  TOP10: {
-    label: (o) => `Un Top 10 sur ${o.race}`,
-    check: (o, c) => {
-      const met = c.results.some((r) => r.race === o.race && r.position <= 10);
-      const done = c.simulated.has(o.race);
-      return { met, pending: !met && !done, score: met ? 100 : 0, detail: done ? 'course disputée' : 'à venir' };
-    },
-  },
-  PARTICIPATION: {
-    label: (o) => `Aligner l'équipe sur ${o.race}`,
-    check: (o, c) => {
-      const e = c.entries.find((x) => x.race === o.race);
-      const done = c.simulated.has(o.race);
-      const met = !!e && (e.status === 'VALIDATED' || done);
-      return { met, pending: !met && !done, score: met ? 100 : 0, detail: e ? e.status : 'non inscrit' };
     },
   },
 };
@@ -60,78 +50,119 @@ function evaluateContract(contract, ctx) {
 
 async function loadSponsorCtx() {
   const tid = state.team.id;
-  const [riders, offers, mine, races, entries] = await Promise.all([
-    sb.from('riders').select('id, nationality, age').eq('team_id', tid),
-    sb.from('sponsors').select('*').order('monthly_payout', { ascending: false }),
-    sb.from('team_sponsors').select('*, sponsors(*)').eq('team_id', tid).order('signed_at'),
-    sb.from('races').select('name, status'),
-    sb.from('race_entries').select('status, races(name)').eq('team_id', tid),
+  const [riders, catalog, mine, races, staff, infra, gs, countries] = await Promise.all([
+    sb.from('riders').select('id, nationality, age, contract_salary').eq('team_id', tid),
+    sb.from('sponsors_catalog').select('*'),
+    sb.from('team_sponsors').select('*, sponsors_catalog(*)').eq('team_id', tid).order('slot_type'),
+    sb.from('races').select('date, status'),
+    sb.from('staff').select('monthly_salary').eq('team_id', tid),
+    sb.from('team_infrastructures').select('maintenance_cost').eq('team_id', tid),
+    sb.from('game_state').select('game_date').eq('id', 1).single(),
+    sb.from('countries').select('*'),
   ]);
   const ids = (riders.data || []).map((r) => r.id);
-  const res = ids.length ? await sb.from('race_results').select('position, races(name)').in('rider_id', ids) : { data: [] };
-  return {
-    riders: riders.data || [], offers: offers.data || [], mine: mine.data || [],
-    simulated: new Set((races.data || []).filter((r) => r.status === 'SIMULATED').map((r) => r.name)),
-    entries: (entries.data || []).map((e) => ({ race: e.races?.name, status: e.status })),
-    results: (res.data || []).map((r) => ({ position: r.position, race: r.races?.name })),
-  };
+  const res = ids.length ? await sb.from('race_results').select('position').in('rider_id', ids) : { data: [] };
+  return { riders: riders.data || [], catalog: catalog.data || [], mine: mine.data || [], races: races.data || [],
+    staff: staff.data || [], infra: infra.data || [], gameDate: gs.data?.game_date, countries: countries.data || [], results: res.data || [] };
+}
+
+// Projection sur 12 mois : revenus sponsors - salaires - maintenance - frais de courses
+function buildProjection(ctx) {
+  const start = new Date(ctx.gameDate || Date.now()); start.setDate(1);
+  const payroll = ctx.riders.reduce((s, r) => s + Number(r.contract_salary || 0), 0) + ctx.staff.reduce((s, x) => s + Number(x.monthly_salary || 0), 0);
+  const maint = ctx.infra.reduce((s, x) => s + Number(x.maintenance_cost || 0), 0);
+  const income = ctx.mine.reduce((s, x) => s + Number(x.monthly_payout) * (evaluateContract({ objectives: x.objectives }, ctx).sat < 40 ? 0.5 : 1), 0);
+  let bal = Number(state.team.budget); const labels = [], data = [];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+    const n = ctx.races.filter((r) => { const rd = new Date(r.date); return r.status === 'SCHEDULED' && rd.getFullYear() === d.getFullYear() && rd.getMonth() === d.getMonth(); }).length;
+    bal += income - payroll - maint - n * RACE_COST;
+    labels.push(d.toLocaleDateString('fr-FR', { month: 'short', year: '2-digit' })); data.push(Math.round(bal));
+  }
+  return { labels, data, income, payroll, maint };
 }
 
 async function renderSponsors(c) {
   c.innerHTML = '<p class="muted">Chargement…</p>';
+  if (sponsorChart) { sponsorChart.destroy(); sponsorChart = null; }
   const ctx = await loadSponsorCtx();
-  const t = state.team;
-  const maxTitles = t.division === 'WORLD_TOUR' ? 3 : 2;
-  const used = ctx.mine.filter((x) => x.slot_type === 'TITLE' || x.occupies_title_slot).length;
+  const t = state.team, conti = t.division === 'CONTI_PRO';
+  const titleSlots = conti ? ['TITLE_1', 'TITLE_2'] : ['TITLE_1', 'TITLE_2', 'TITLE_3'];
+  const taken = new Set(ctx.mine.flatMap((x) => [x.slot_type, x.gear_slot].filter(Boolean)));
   const owned = new Set(ctx.mine.map((x) => x.sponsor_id));
-  const monthly = ctx.mine.reduce((s, x) => s + Number(x.monthly_payout || 0), 0);
+
+  // Filtrage : grade 2 uniquement en Conti-Pro ; titres = pays de l'équipe (sinon même région si aucune offre locale)
+  const visible = ctx.catalog.filter((s) => !conti || s.grade === 2);
+  const localExists = visible.some((s) => s.is_team_sponsor && s.country_code === t.nationality);
+  const myRegion = ctx.countries.find((x) => x.code === t.nationality)?.region;
+  const offers = visible.filter((s) => !s.is_team_sponsor || s.country_code === t.nationality || (!localExists && s.region === myRegion))
+    .sort((a, b) => Number(b.budget_amount) - Number(a.budget_amount));
 
   const lockReason = (s) => {
     if (owned.has(s.id)) return 'Déjà sous contrat';
-    if (t.division === 'CONTI_PRO' && s.tier > 2) return 'Trop prestigieuse : ignore les équipes Conti-Pro';
-    if ((s.type === 'TITLE' || s.requires_title_slot) && used >= maxTitles) return `Slots titres complets (${used}/${maxTitles})`;
-    if (s.type !== 'TITLE' && ctx.mine.some((x) => x.slot_type === s.type)) return 'Slot déjà occupé';
-    if (Number(s.upfront_cost) > Number(t.budget)) return 'Budget insuffisant';
+    if (s.gear_slot && taken.has(s.gear_slot)) return `Slot ${GEAR_LABELS[s.gear_slot]} déjà occupé`;
+    if (s.is_team_sponsor && s.gear_slot && taken.has('TITLE_2')) return 'Exige le slot Titre 2, déjà occupé';
+    if (s.is_team_sponsor && !s.gear_slot && !titleSlots.some((k) => !taken.has(k))) return 'Slots titres complets';
     return null;
   };
-  const reqList = (objs) => (objs || []).map((o) => `<li>${esc(OBJECTIVES[o.type]?.label(o) ?? o.type)}</li>`).join('');
+
+  const p = buildProjection(ctx);
+  const firstNeg = p.data.findIndex((v) => v < 0);
+  const monthly = ctx.mine.reduce((s, x) => s + Number(x.monthly_payout), 0);
+  const kind = (s) => (s.is_team_sponsor ? (s.gear_slot ? `Titre 2 + ${GEAR_LABELS[s.gear_slot]}` : 'Sponsor titre') : GEAR_LABELS[s.gear_slot]);
+  const money = (s) => `${s.free_gear ? 'Matériel gratuit + ' : ''}${fmtEUR(s.budget_amount || 0)} / an`;
 
   const contractCard = (x) => {
-    const s = x.sponsors, ev = evaluateContract(x, ctx);
-    const cls = ev.sat >= 70 ? 'ok' : ev.sat >= 40 ? 'warn' : 'bad';
+    const s = x.sponsors_catalog, ev = evaluateContract(x, ctx), cls = ev.sat >= 70 ? 'ok' : ev.sat >= 40 ? 'warn' : 'bad';
     return `<div class="card contract">
-      <div class="head"><b>${esc(s.name)}</b><span class="muted">${SLOT_LABELS[x.slot_type]} · jusqu'en ${x.contract_end_year}</span></div>
-      ${x.occupies_title_slot ? '<span class="badge warn">Occupe le slot titre n°2</span>' : ''}
-      <div>${fmtEUR(x.monthly_payout)} / mois</div>
+      <div class="head"><b>${esc(s.name)}</b><span class="muted">${slotLabel(x.slot_type)}${x.gear_slot ? ' + ' + GEAR_LABELS[x.gear_slot] : ''} · jusqu'en ${x.contract_end_year}</span></div>
+      <div>${fmtEUR(x.monthly_payout)} / mois${s.free_gear ? ' · matériel gratuit' : ''}</div>
       <label>Satisfaction : ${ev.sat}%</label><div class="bar ${cls}"><i style="width:${ev.sat}%"></i></div>
+      ${ev.sat < 40 ? '<span class="badge bad">Sous 40% : dotation réduite de 50%, risque de résiliation</span>' : ''}
       <ul class="req">${ev.items.map((i) => `<li class="${i.met ? 'ok' : i.pending ? '' : 'ko'}">${i.met ? '✅' : i.pending ? '⏳' : '❌'} ${esc(i.text)} <span class="muted">(${esc(i.detail)})</span></li>`).join('')}</ul>
-      <button class="danger" data-end="${x.id}">Rompre (pénalité ${fmtEUR(s.termination_penalty)})</button></div>`;
+      ${s.objectives_description ? `<div class="muted">Contrat : ${esc(s.objectives_description)}</div>` : ''}
+      <button class="danger" data-end="${x.id}">Rompre (pénalité ${fmtEUR(x.monthly_payout * 3)})</button></div>`;
   };
 
   const offerCard = (s) => {
     const why = lockReason(s);
     return `<div class="card offer">
-      <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(NATS[s.nationality] || s.nationality)} · tier ${s.tier}</span></div>
-      ${s.requires_title_slot ? '<span class="badge warn">Exige le slot Titre n°2 : son nom s\'ajoute à celui de l\'équipe</span>' : ''}
-      <ul class="kv"><li>💶 ${fmtEUR(s.monthly_payout)} / mois</li><li>🏆 Prime de résultat : ${fmtEUR(s.result_bonus)}</li><li>📅 ${s.duration_years} an(s)</li>
-        ${Number(s.upfront_cost) > 0 ? `<li class="neg">Investissement initial : ${fmtEUR(s.upfront_cost)}</li>` : ''}
-        <li class="neg">Rupture : ${fmtEUR(s.termination_penalty)}</li></ul>
-      ${(s.objectives || []).length ? `<div class="muted">Exigences :</div><ul class="req">${reqList(s.objectives)}</ul>` : ''}
+      <div class="head"><b>${esc(s.name)}</b><span class="muted">${esc(s.country)} · grade ${s.grade}</span></div>
+      <span class="badge ${s.is_team_sponsor && s.gear_slot ? 'warn' : ''}">${esc(kind(s))}</span>
+      <ul class="kv"><li>💶 ${money(s)}</li><li>📅 ${s.contract_duration_years} an(s)</li></ul>
+      ${s.objectives_description ? `<div class="muted">Exigences : ${esc(s.objectives_description)}</div>` : ''}
+      ${s.is_team_sponsor && s.gear_slot ? '<div class="muted">Exige le slot Titre 2 : son nom s\'ajoute à celui de l\'équipe.</div>' : ''}
       <button data-sign="${s.id}" ${why ? 'disabled' : ''}>Signer</button>${why ? `<div class="muted">${esc(why)}</div>` : ''}</div>`;
   };
 
-  const offers = ctx.offers.filter((s) => s.type !== 'TITLE' || s.nationality === t.nationality);
+  const sections = [
+    ['Sponsors titres', offers.filter((s) => s.is_team_sponsor && !s.gear_slot)],
+    ['Double rôle : Titre 2 + équipement exclusif', offers.filter((s) => s.is_team_sponsor && s.gear_slot)],
+    ...Object.keys(GEAR_LABELS).map((k) => [`Équipementier : ${GEAR_LABELS[k]}`, offers.filter((s) => !s.is_team_sponsor && s.gear_slot === k)]),
+  ];
+
   c.innerHTML = `
     <h2>Contrats & Sponsors</h2>
     <div class="card"><div class="muted">Nom officiel de l'équipe</div><h3>${esc(t.official_name || t.name)}</h3>
-      <div class="muted">Sponsors titres : ${used}/${maxTitles} · Revenus sponsors : ${fmtEUR(monthly)} / mois · Budget : ${fmtEUR(t.budget)}</div>
+      <div class="muted">Revenus sponsors : ${fmtEUR(monthly)} / mois · Budget : ${fmtEUR(t.budget)}${conti ? ' · Les sponsors de grade 1 ne négocient pas avec une équipe Conti-Pro' : ''}</div>
       <div class="err" id="sp-msg"></div></div>
+    <div class="card"><h3>Projection du budget sur 12 mois</h3>
+      <div class="${firstNeg >= 0 ? 'err' : 'okmsg'}">${firstNeg >= 0 ? `⚠️ Déficit prévu dès ${p.labels[firstNeg]} : signez des sponsors ou réduisez les dépenses.` : '✅ Trésorerie positive sur 12 mois.'}</div>
+      <div class="muted">Revenus ${fmtEUR(p.income)}/mois · Salaires ${fmtEUR(p.payroll)}/mois · Maintenance ${fmtEUR(p.maint)}/mois · Courses ${fmtEUR(RACE_COST)} chacune. Primes non chiffrées dans le catalogue (0 pour l'instant).</div>
+      ${typeof Chart === 'undefined' ? '<p class="err">Chart.js non chargé.</p>' : '<canvas id="proj" height="110"></canvas>'}</div>
     <h3>Contrats actifs</h3>
-    ${ctx.mine.length ? `<div class="grid2">${ctx.mine.map(contractCard).join('')}</div>` : '<div class="card muted">Aucun contrat pour le moment.</div>'}
-    ${Object.keys(SLOT_LABELS).map((type) => {
-      const list = offers.filter((s) => s.type === type);
-      return list.length ? `<h3>${SLOT_LABELS[type]}</h3><div class="grid2">${list.map(offerCard).join('')}</div>` : '';
-    }).join('')}`;
+    ${ctx.mine.length ? `<div class="grid2">${ctx.mine.map(contractCard).join('')}</div>` : '<div class="card muted">Aucun contrat : signez vos premiers sponsors pour financer la saison.</div>'}
+    ${sections.map(([title, list]) => (list.length ? `<h3>${title}</h3><div class="grid2">${list.map(offerCard).join('')}</div>` : '')).join('')}`;
+
+  if (typeof Chart !== 'undefined') {
+    sponsorChart = new Chart($('proj'), { type: 'line',
+      data: { labels: p.labels, datasets: [{ data: p.data, borderColor: '#10b981', tension: 0.2,
+        segment: { borderColor: (g) => (g.p0.parsed.y < 0 || g.p1.parsed.y < 0 ? '#ef4444' : '#10b981') },
+        pointBackgroundColor: p.data.map((v) => (v < 0 ? '#ef4444' : '#10b981')) }] },
+      options: { plugins: { legend: { display: false } }, scales: {
+        y: { ticks: { callback: (v) => v.toLocaleString('fr-FR') + ' €', color: '#94a3b8' }, grid: { color: '#1e293b' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } } } } });
+  }
 
   c.onclick = async (e) => {
     const b = e.target.closest('button[data-sign],button[data-end]');
@@ -143,7 +174,7 @@ async function renderSponsors(c) {
         if (error) throw error;
       } else {
         const x = ctx.mine.find((m) => m.id === b.dataset.end);
-        if (!confirm(`Rompre le contrat avec ${x.sponsors.name} ? Pénalité : ${fmtEUR(x.sponsors.termination_penalty)}`)) { b.disabled = false; return; }
+        if (!confirm(`Rompre le contrat avec ${x.sponsors_catalog.name} ? Pénalité : ${fmtEUR(x.monthly_payout * 3)}`)) { b.disabled = false; return; }
         const { error } = await sb.rpc('terminate_sponsor', { p_contract: b.dataset.end });
         if (error) throw error;
       }

@@ -11,7 +11,7 @@ create table profiles (
 
 create table game_state (
   id int primary key default 1 check (id = 1),   -- ligne unique
-  current_date date not null default '2027-01-01',
+  game_date date not null default '2027-01-01',
   season_year int not null default 2027
 );
 insert into game_state default values;

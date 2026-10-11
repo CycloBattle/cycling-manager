@@ -46,6 +46,7 @@ async function route() {
   if (!t) return viewTeam();
   const { data: p } = await sb.from('profiles').select('is_admin').eq('user_id', state.user.id).maybeSingle();
   state.isAdmin = !!p?.is_admin;
+  await loadGame();
   viewGame();
 }
 
@@ -53,7 +54,7 @@ async function route() {
 function viewAuth(mode = 'in') {
   $app.innerHTML = `
     <div class="card narrow">
-      <h1>🚴 Cycling Manager</h1>
+      <h1>Cycling Manager</h1>
       <div><label>Email</label><input id="email" type="email" autocomplete="email"></div>
       <div><label>Mot de passe (6 caractères min.)</label><input id="pwd" type="password" autocomplete="current-password"></div>
       <div class="err" id="err"></div>
@@ -152,56 +153,201 @@ function viewTeam() {
   });
 }
 
-// ---------- Écran 4 : coque du jeu (onglets) ----------
-const TABS = [
-  ['dashboard', '🏠 Tableau de bord'], ['contracts', '💶 Contrats & Sponsors'], ['infra', '🏗️ Infrastructures'],
-  ['staff', '🧑‍🏫 Staff'], ['races', '🏁 Courses'], ['search', '🔎 Recherche'], ['ranking', '🏆 Classement UCI'],
-];
+// ---------- Écran 4 : jeu (disposition type Football Manager) ----------
+Object.assign(state, { menu: 'portal', tab: 'portal', hist: [['portal', 'portal']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '' });
+const PROFILES = { FLAT: 'Plat', MOUNTAIN: 'Montagne', HILLS: 'Vallonné', COBBLES: 'Pavés', TIME_TRIAL: 'Contre-la-montre' };
+const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
+const MENUS = {
+  portal: { label: 'PORTAIL', subs: [['portal', 'Portail'], ['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
+  squad: { label: 'EFFECTIF', subs: [['squad', 'Équipe première'], ['staff', 'Staff & encadrement']] },
+  tactics: { label: 'TACTIQUES', subs: [['races', 'Engagements de course'], ['calendar', 'Calendrier']] },
+  recruit: { label: 'RECRUTEMENT', subs: [['search', 'Base de données cyclistes'], ['market', 'Marché des transferts']] },
+  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
+  club: { label: 'CLUB', subs: [['contracts', 'Sponsors & Finances'], ['infra', 'Infrastructures'], ['ranking', 'Classement UCI']] },
+};
+const gd = (iso) => new Date(iso + 'T12:00:00');
+const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
+const store = {
+  get(k, def) { try { return JSON.parse(localStorage.getItem(k)) ?? def; } catch (e) { return def; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+const toast = (msg) => { const d = document.createElement('div'); d.className = 'toast'; d.textContent = msg; document.body.appendChild(d); setTimeout(() => d.remove(), 3500); };
+const daysUntil = (iso) => Math.round((gd(iso) - gd(state.game.game_date)) / 864e5);
+
+async function loadGame() {
+  const [g, r] = await Promise.all([
+    sb.from('game_state').select('*').eq('id', 1).single(),
+    sb.from('races').select('*').eq('status', 'SCHEDULED').order('date').limit(1),
+  ]);
+  state.game = g.data; state.nextRace = r.data?.[0] || null;
+}
+
+function go(menu, tab, push = true) {
+  if (push) { state.hist = state.hist.slice(0, state.hpos + 1); state.hist.push([menu, tab]); state.hpos = state.hist.length - 1; }
+  state.menu = menu; state.tab = tab; viewGame();
+}
+const step = (d) => { const n = state.hpos + d; if (n >= 0 && n < state.hist.length) { state.hpos = n; go(...state.hist[n], false); } };
+
+async function continueGame() {
+  if (state.isAdmin) {
+    const d = gd(state.game.game_date); d.setDate(d.getDate() + 1);
+    const { error } = await sb.from('game_state').update({ game_date: d.toISOString().slice(0, 10) }).eq('id', 1);
+    if (error) return toast(error.message);
+    toast('Jour suivant.');
+  } else toast("Seul l'administrateur fait avancer le temps : date synchronisée.");
+  await loadGame(); viewGame();
+}
 
 function viewGame() {
-  const t = state.team, tabs = state.isAdmin ? [...TABS, ['admin', '🛡️ Admin']] : TABS;
+  const t = state.team, g = state.game, d = gd(g.game_date);
+  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin']);
+  const quick = [['portal|messages', 'Messages'], ['squad|squad', 'Équipe première'], ['recruit|search', 'Base de données cyclistes'], ['recruit|market', 'Marché des transferts'], ['portal|competitions', 'Compétitions']];
+  const nr = state.nextRace, n = nr ? daysUntil(nr.date) : null;
   $app.innerHTML = `
-    <div class="layout">
-      <aside>
-        <div class="brand"><img src="${esc(logoSrc(t))}" alt=""><div><b>${esc(t.official_name || t.name)}</b><div class="muted">${esc(NATS[t.nationality] || t.nationality)}</div></div></div>
-        ${tabs.map(([k, l]) => `<button class="tab ${k === state.tab ? 'active' : ''}" data-tab="${k}">${l}</button>`).join('')}
-        <div style="flex:1"></div>
-        <button class="link" id="out">Déconnexion</button>
-      </aside>
-      <main id="content"></main>
-    </div>`;
-  document.querySelectorAll('.tab').forEach((b) => (b.onclick = () => { state.tab = b.dataset.tab; viewGame(); }));
-  $('out').onclick = () => sb.auth.signOut();
+    <header class="fm-top">
+      <div class="fm-row1">
+        <button class="nav-arrow" id="back">&lt;</button><button class="nav-arrow" id="fwd">&gt;</button>
+        <div class="fm-brand"><img src="${esc(logoSrc(t))}" alt=""><b>${esc(t.official_name || t.name)}</b></div>
+        <nav class="fm-main">${Object.entries(MENUS).map(([k, v]) => `<button data-menu="${k}" class="${k === state.menu ? 'on' : ''}">${v.label}</button>`).join('')}</nav>
+        <div class="fm-tools">
+          <input id="gsearch" placeholder="Rechercher un coureur" value="${esc(state.q)}"><span class="dot ${navigator.onLine ? '' : 'off'}" title="Connexion"></span>
+          <div class="fm-date"><b>${DAYS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}</b><span>${nr ? (n <= 0 ? 'Course aujourd\'hui' : `Prochaine course : ${n} jour${n > 1 ? 's' : ''}`) : 'Aucune course prévue'}</span></div>
+          <button class="fm-continue" id="cont">Continuer &raquo;</button><button class="link" id="out">Quitter</button>
+        </div>
+      </div>
+      <div class="fm-row2">
+        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab ? 'on' : ''}">${l}</button>`).join('')}</nav>
+        <nav class="fm-quick">${quick.map(([k, l]) => `<button data-go="${k}">${l}</button>`).join('')}</nav>
+      </div>
+    </header>
+    <main id="content"></main>`;
+  document.querySelectorAll('[data-menu]').forEach((b) => (b.onclick = () => go(b.dataset.menu, MENUS[b.dataset.menu].subs[0][0])));
+  document.querySelectorAll('[data-sub]').forEach((b) => (b.onclick = () => go(state.menu, b.dataset.sub)));
+  document.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => go(...b.dataset.go.split('|'))));
+  $('back').onclick = () => step(-1); $('fwd').onclick = () => step(1);
+  $('out').onclick = () => sb.auth.signOut(); $('cont').onclick = continueGame;
+  $('gsearch').onkeydown = (e) => { if (e.key === 'Enter' && e.target.value.trim()) { state.q = e.target.value.trim(); go('recruit', 'searchres'); } };
   renderTab();
 }
 
 async function renderTab() {
-  const c = $('content'), t = state.team, m = state.manager;
-  if (state.tab === 'dashboard') {
-    const { count } = await sb.from('riders').select('*', { count: 'exact', head: true }).eq('team_id', t.id);
-    const attr = (l, v) => `<div><label>${l} : ${v}/100</label><div class="bar"><i style="width:${v}%"></i></div></div>`;
-    c.innerHTML = `
-      <h2>Tableau de bord</h2>
-      <div class="stats">
-        <div class="card stat"><span class="muted">Budget</span><b>${fmtEUR(t.budget)}</b></div>
-        <div class="card stat"><span class="muted">Division</span><b>${t.division === 'WORLD_TOUR' ? 'World Tour' : 'Conti Pro'}</b></div>
-        <div class="card stat"><span class="muted">Points UCI</span><b>${t.uci_points}</b></div>
-        <div class="card stat"><span class="muted">Effectif</span><b>${count ?? 0} coureurs</b></div>
-      </div>
-      <div class="card" style="display:flex;gap:1rem;align-items:center">
-        <img class="avatar" src="${esc(avatarSrc(m))}" alt="">
-        <div style="flex:1"><h3>Manager : ${esc(m.first_name)} ${esc(m.last_name)} (${m.age} ans, ${esc(NATS[m.nationality] || m.nationality)})</h3>
-        ${attr('Réputation', m.reputation)}${attr('Pédagogie', m.pedagogy)}${attr('Négociation', m.negotiation)}</div></div>`;
-  } else if (state.tab === 'contracts') {
-    await renderSponsors(c);
-  } else if (state.tab === 'ranking') {
-    const { data } = await sb.from('teams').select('name, nationality, uci_points').order('uci_points', { ascending: false });
-    c.innerHTML = `<h2>Classement UCI</h2><div class="card"><table>${(data || []).map((x, i) =>
-      `<tr><td>${i + 1}</td><td>${esc(x.name)} (${esc(x.nationality)})</td><td>${x.uci_points} pts</td></tr>`).join('')}</table></div>`;
-  } else {
-    const label = [...TABS, ['admin', 'Admin']].find(([k]) => k === state.tab)[1];
-    c.innerHTML = `<h2>${label}</h2><div class="card muted">Onglet à construire dans la prochaine étape.</div>`;
+  const c = $('content'), tab = state.tab;
+  if (tab === 'portal' || tab === 'overview') return renderPortal(c);
+  if (tab === 'contracts') return renderSponsors(c);
+  if (tab === 'ranking') {
+    const { data } = await sb.from('teams').select('name, official_name, nationality, uci_points').order('uci_points', { ascending: false });
+    c.innerHTML = `<div class="panel"><h4>Classement UCI par équipes</h4><table class="fm">${(data || []).map((x, i) =>
+      `<tr><td>${i + 1}</td><td>${esc(x.official_name || x.name)} (${esc(x.nationality)})</td><td>${x.uci_points} pts</td></tr>`).join('')}</table></div>`;
+    return;
   }
+  if (tab === 'squad') {
+    const { data } = await sb.from('riders').select('*').eq('team_id', state.team.id).order('last_name');
+    const cols = [['flat', 'Plat'], ['mountain', 'Mont.'], ['hills', 'Côtes'], ['time_trial', 'CLM'], ['sprint', 'Sprint'], ['cobbles', 'Pavés'], ['stamina', 'Endur.'], ['recovery', 'Récup.']];
+    c.innerHTML = `<div class="panel" style="overflow:auto"><h4>Équipe première</h4><table class="fm"><tr><th>Coureur</th><th>Âge</th>${cols.map((x) => `<th>${x[1]}</th>`).join('')}<th>Fatigue</th></tr>${(data || []).map((r) =>
+      `<tr><td>${esc(r.first_name)} ${esc(r.last_name)} <span class="muted">${esc(r.nationality)}</span></td><td>${r.age}</td>${cols.map((x) => `<td>${r[x[0]]}</td>`).join('')}<td class="${r.fatigue > 60 ? 'down' : ''}">${r.fatigue}</td></tr>`).join('')}</table></div>`;
+    return;
+  }
+  if (tab === 'searchres') {
+    const q = state.q.replace(/[^\p{L}\p{N} '-]/gu, '');
+    const { data } = await sb.from('riders').select('first_name, last_name, age, nationality, teams(name)').or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`).limit(50);
+    c.innerHTML = `<div class="panel"><h4>Résultats pour « ${esc(q)} »</h4><table class="fm">${(data || []).map((r) =>
+      `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${r.age} ans</td><td>${esc(r.nationality)}</td><td>${esc(r.teams?.name || 'Libre')}</td></tr>`).join('') || '<tr><td class="muted">Aucun coureur trouvé.</td></tr>'}</table>
+      <p class="muted">Les notes des coureurs adverses sont masquées sans scouting.</p></div>`;
+    return;
+  }
+  const all = Object.values(MENUS).flatMap((m) => m.subs).concat([['admin', 'Admin']]);
+  c.innerHTML = `<div class="panel"><h4>${esc(all.find((x) => x[0] === tab)?.[1] || tab)}</h4><p class="muted">Cet écran sera construit dans une prochaine étape.</p></div>`;
+}
+
+// Messages dérivés des données du jeu (non stockés) ; l'état « lu » est gardé dans le navigateur
+function buildMessages(ctx) {
+  const t = state.team, today = fmtShort(state.game.game_date), out = [];
+  if (!ctx.mine.length) out.push({ id: 'spons-none', from: 'Direction financière', cat: 'Sponsors', title: 'Aucun sponsor signé', body: "Sans sponsor, l'équipe n'a aucun revenu. Ouvrez Club > Sponsors & Finances.", task: true });
+  ctx.riders.filter((r) => r.fatigue > 60).forEach((r) => out.push({ id: 'fat-' + r.id, from: 'Physiologiste', cat: 'Entraînement', title: `Fatigue élevée : ${r.first_name} ${r.last_name} (${r.fatigue})`, body: 'Prévoyez du repos avant la prochaine course.', toRead: true }));
+  ctx.races.filter((r) => r.status === 'SCHEDULED' && daysUntil(r.date) <= 14 && !ctx.entryByRace[r.id]).slice(0, 3).forEach((r) => out.push({ id: 'entry-' + r.id, from: 'Directeur sportif', cat: 'Compétition', title: `Composer l'équipe : ${r.name}`, body: `Course le ${fmtShort(r.date)}. Sans validation, la sélection sera automatique.`, task: true }));
+  ctx.sums.forEach((s, i) => out.push({ id: 'sum-' + i + (s.races?.name || ''), from: 'Presse', cat: 'Résultat', title: `Résumé : ${s.races?.name || 'course'}`, body: s.summary_text, toRead: true }));
+  out.push({ id: 'welcome', from: "Conseil d'administration", cat: 'Direction', title: `Bienvenue à la tête de ${t.official_name || t.name}`, body: 'Objectif de la saison : bâtir un budget solide grâce aux sponsors puis progresser au classement UCI.', toRead: true });
+  return out.map((m) => ({ ...m, date: today }));
+}
+
+function messagesHTML(msgs) {
+  const key = 'cm_read_' + state.user.id, read = new Set(store.get(key, [])), f = state.mfilter;
+  const list = msgs.filter((m) => f === 'all' || (f === 'new' && !read.has(m.id)) || (f === 'task' && m.task) || (f === 'toread' && m.toRead && !read.has(m.id)));
+  const tab = (k, l) => `<button data-mf="${k}" class="${f === k ? 'on' : ''}">${l}</button>`;
+  return `<div class="tabs">${tab('all', 'Tous')}${tab('new', 'Nouv. (' + msgs.filter((m) => !read.has(m.id)).length + ')')}${tab('task', 'Tâches (' + msgs.filter((m) => m.task).length + ')')}${tab('toread', 'À lire')}</div>
+    <div class="msgs">${list.map((m) => `<div class="msg ${read.has(m.id) ? 'read' : ''}" data-msg="${esc(m.id)}">
+      <div class="from"><span>${esc(m.from)}</span><span class="tag">${esc(m.cat)}</span></div><div class="title">${esc(m.title)}</div>
+      <div class="muted">${m.date}</div><div class="body">${esc(m.body)}</div></div>`).join('') || '<p class="muted">Aucun message.</p>'}</div>`;
+}
+
+async function renderPortal(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game;
+  const [riders, races, teams, sums, mine, free, staff, entries] = await Promise.all([
+    sb.from('riders').select('*').eq('team_id', t.id),
+    sb.from('races').select('*').order('date'),
+    sb.from('teams').select('id, name, official_name, division, uci_points').order('uci_points', { ascending: false }),
+    sb.from('race_summaries').select('summary_text, races(name, date)').order('id', { ascending: false }).limit(3),
+    sb.from('team_sponsors').select('monthly_payout').eq('team_id', t.id),
+    sb.from('riders').select('id', { count: 'exact', head: true }).is('team_id', null),
+    sb.from('staff').select('monthly_salary').eq('team_id', t.id),
+    sb.from('race_entries').select('race_id, status').eq('team_id', t.id),
+  ]);
+  const ctx = { riders: riders.data || [], races: races.data || [], mine: mine.data || [], sums: sums.data || [], entryByRace: Object.fromEntries((entries.data || []).map((e) => [e.race_id, e.status])) };
+  const sum = (a, k) => a.reduce((s, x) => s + Number(x[k] || 0), 0);
+  const payroll = sum(ctx.riders, 'contract_salary') + sum(staff.data || [], 'monthly_salary'), income = sum(ctx.mine, 'monthly_payout'), net = income - payroll;
+  const health = net >= 0 ? 100 : Math.max(0, Math.min(100, Math.round((Number(t.budget) / -net / 6) * 100)));
+  const upcoming = ctx.races.filter((r) => r.status === 'SCHEDULED'), nr = upcoming[0];
+  const msgs = buildMessages(ctx);
+
+  // Classement avec flèches (comparaison avec la date de jeu précédente, mémorisée dans le navigateur)
+  const rk = teams.data || [], now = Object.fromEntries(rk.map((x, i) => [x.id, i + 1])), sk = 'cm_rank_' + state.user.id;
+  let snap = store.get(sk, {}); snap = snap.date === g.game_date ? { ...snap, ranks: now } : { date: g.game_date, prev: snap.ranks || {}, ranks: now }; store.set(sk, snap);
+  const arrow = (id) => { const p = snap.prev?.[id]; return p == null || p === now[id] ? '<span class="muted">=</span>' : p > now[id] ? '<span class="up">▲</span>' : '<span class="down">▼</span>'; };
+
+  // Stats cyclistes
+  const best = (k) => ctx.riders.slice().sort((a, b) => b[k] - a[k])[0];
+  const rowS = (label, r, v) => `<div class="stat-row"><div>${label}<small>${r ? esc(r.first_name + ' ' + r.last_name) : 'n/a'}</small></div><b>${r ? v : '-'}</b></div>`;
+  const avgFat = ctx.riders.length ? Math.round(sum(ctx.riders, 'fatigue') / ctx.riders.length) : 0;
+
+  // Actualités : dernier résumé de course, sinon message d'accueil
+  const s0 = ctx.sums[0], lines = (s0?.summary_text || '').split('\n').map((x) => x.replace(/^[^\p{L}\p{N}]+/u, '')).filter(Boolean);
+  const myRank = now[t.id];
+  const plan = ['Foncier', 'Aéro', 'Sprint', 'Montagne', 'Récup.', 'Foncier', 'Repos'], today = (gd(g.game_date).getDay() + 6) % 7;
+
+  c.innerHTML = `<div class="portal">
+    <div><div class="panel"><h4>Messages</h4><div id="msgbox">${messagesHTML(msgs)}</div></div></div>
+    <div>
+      <div class="panel"><h4>Infos</h4>
+        <div class="hero"><b>${esc(s0 ? lines[0] : `Saison ${g.season_year} : l'aventure commence`)}</b><p>${esc(s0 ? lines.slice(1, 3).join(' ') : "Signez vos sponsors, composez l'équipe et visez le haut du classement UCI.")}</p></div>
+        <div class="newsitem"><div><b>Classement UCI</b><div class="muted">Votre équipe est ${myRank}e sur ${rk.length} avec ${t.uci_points} points.</div></div></div>
+        <div class="newsitem"><div><b>État de forme</b><div class="muted">Fatigue moyenne de l'effectif : ${avgFat}/100.</div></div></div></div>
+      <div class="panel"><h4>Programme des courses</h4><table class="fm"><tr><th>Date</th><th>Course</th><th>Profil</th><th>Statut</th></tr>${upcoming.slice(0, 7).map((r) =>
+        `<tr><td>${fmtShort(r.date)}</td><td>${esc(r.name)}</td><td>${PROFILES[r.profile_type] || ''} ${r.distance_km || ''} km</td><td>${ctx.entryByRace[r.id] === 'VALIDATED' ? 'Équipe validée' : 'À composer'}</td></tr>`).join('') || '<tr><td class="muted">Aucune course prévue.</td></tr>'}</table></div>
+    </div>
+    <div>
+      <div class="panel"><h4>Classement UCI par équipes</h4><table class="fm"><tr><th>#</th><th></th><th>Équipe</th><th>Div.</th><th>Pts</th></tr>${rk.slice(0, 20).map((x, i) =>
+        `<tr class="${x.id === t.id ? 'me' : ''}"><td>${i + 1}</td><td>${arrow(x.id)}</td><td>${esc(x.official_name || x.name)}</td><td>${x.division === 'WORLD_TOUR' ? 'WT' : 'CP'}</td><td>${x.uci_points}</td></tr>`).join('')}</table></div>
+      <div class="panel"><h4>Stats cyclistes</h4>${rowS('Meilleur sprinteur', best('sprint'), best('sprint')?.sprint)}${rowS('Meilleur grimpeur', best('mountain'), best('mountain')?.mountain)}${rowS('Coureur le plus régulier', best('stamina'), best('stamina')?.stamina)}
+        <div class="stat-row"><div>Fatigue moyenne<small>Effectif de ${ctx.riders.length} coureurs</small></div><b>${avgFat}</b></div></div>
+    </div>
+    <div>
+      <div class="panel"><h4>Prochaine épreuve</h4>${nr ? `<div class="big">${esc(nr.name)}</div><div class="muted">${fmtShort(nr.date)} · ${PROFILES[nr.profile_type] || ''} · ${nr.distance_km || '?'} km</div>` : '<p class="muted">Aucune course prévue.</p>'}</div>
+      <div class="panel"><h4>Budget & finances</h4><div class="muted">Budget disponible</div><div class="big">${fmtEUR(t.budget)}</div>
+        <div class="stat-row"><span>Masse salariale / mois</span><b>${fmtEUR(payroll)}</b></div><div class="stat-row"><span>Revenus sponsors / mois</span><b>${fmtEUR(income)}</b></div>
+        <div class="muted" style="margin-top:.4rem">Santé financière</div><div class="meter"><i style="width:${health}%"></i></div></div>
+      <div class="panel"><h4>Recherche de talents</h4><div class="big">${free.count ?? 0}</div><div class="muted">coureurs sans contrat sur le marché</div></div>
+      <div class="panel"><h4>Entraînement</h4><div class="week">${['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'].map((d, i) => `<div class="${i === today ? 'today' : ''}"><b>${d}</b><br>${plan[i]}</div>`).join('')}</div><div class="muted" style="margin-top:.4rem">Plan par défaut</div></div>
+    </div></div>`;
+
+  const box = $('msgbox'), bind = () => {
+    box.querySelectorAll('[data-mf]').forEach((b) => (b.onclick = () => { state.mfilter = b.dataset.mf; box.innerHTML = messagesHTML(msgs); bind(); }));
+    box.querySelectorAll('[data-msg]').forEach((m) => (m.onclick = () => {
+      const k = 'cm_read_' + state.user.id, r = new Set(store.get(k, [])); r.add(m.dataset.msg); store.set(k, [...r]);
+      m.classList.add('read'); m.classList.toggle('open');
+    }));
+  };
+  bind();
 }
 
 // ---------- Démarrage ----------

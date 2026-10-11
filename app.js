@@ -2,8 +2,9 @@
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 const $app = document.getElementById('app');
 
-const NATS = { FR:'France', BE:'Belgique', IT:'Italie', ES:'Espagne', DE:'Allemagne', NL:'Pays-Bas',
-  DK:'Danemark', GB:'Royaume-Uni', CH:'Suisse', PT:'Portugal', NO:'Norvège', US:'États-Unis' };
+const NATS = { FR:'France', BE:'Belgique', IT:'Italie', ES:'Espagne', DE:'Allemagne', NL:'Pays-Bas', DK:'Danemark', GB:'Royaume-Uni',
+  CH:'Suisse', PT:'Portugal', NO:'Norvège', SE:'Suède', AT:'Autriche', US:'États-Unis', CA:'Canada', MX:'Mexique', CN:'Chine',
+  JP:'Japon', TW:'Taïwan', KR:'Corée du Sud', IN:'Inde', QA:'Qatar', AU:'Australie', NZ:'Nouvelle-Zélande' };
 const state = { user: null, manager: null, team: null, isAdmin: false, tab: 'dashboard' };
 
 // ---------- Utilitaires ----------
@@ -128,7 +129,7 @@ function viewTeam() {
       <div><label>Nom de l'équipe</label><input id="tn"></div>
       <div><label>Nationalité (influence les sponsors proposés)</label><select id="tnat">${natOptions(state.manager.nationality)}</select></div>
       <div><label>Logo PNG (optionnel, 1 Mo max)</label><input id="logo" type="file" accept="image/png"></div>
-      <p class="muted">Division de départ : <b>Continental Pro</b> · Budget : <b>500 000 €</b></p>
+      <p class="muted">Division de départ : <b>Continental Pro</b> · Budget : <b>50 000 €</b> (trésorerie de départ : les sponsors financent la saison)</p>
       <div class="err" id="err"></div>
       <button id="go">Lancer ma carrière</button>
     </div>`;

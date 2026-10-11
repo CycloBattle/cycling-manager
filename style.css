@@ -30,3 +30,12 @@ table { width:100%; border-collapse:collapse; } td,th { padding:.5rem; border-to
 .photos img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:10px; border:3px solid transparent; cursor:pointer; background:#1e293b; }
 .photos img.sel { border-color:var(--acc); }
 .avatar { width:84px; height:84px; border-radius:50%; object-fit:cover; background:#1e293b; }
+.grid2 { display:grid; grid-template-columns:repeat(auto-fill,minmax(270px,1fr)); gap:.75rem; }
+.offer, .contract { display:grid; gap:.5rem; align-content:start; }
+.head { display:flex; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
+.kv, .req { margin:0; font-size:.9rem; } .kv { list-style:none; padding:0; } .req { padding-left:1.1rem; }
+.neg { color:#fca5a5; } .req .ok { color:#6ee7b7; } .req .ko { color:#fca5a5; }
+.badge { font-size:.75rem; padding:.2rem .6rem; border-radius:99px; background:#334155; width:fit-content; } .badge.warn { background:#78350f; color:#fde68a; }
+.bar.ok i { background:#10b981; } .bar.warn i { background:#f59e0b; } .bar.bad i { background:#ef4444; }
+button.danger { background:#7f1d1d; color:#fecaca; }
+button:disabled { cursor:not-allowed; }

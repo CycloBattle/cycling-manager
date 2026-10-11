@@ -20,6 +20,13 @@ function logoSrc(team) {            // logo par défaut : pastille avec l'initia
   return 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
+function avatarSrc(m) {              // avatar par défaut : initiales
+  if (m?.photo_url) return m.photo_url;
+  const i = esc(((m?.first_name || '?')[0] + (m?.last_name || '')[0]).toUpperCase());
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='32' fill='#334155'/><text x='32' y='41' font-size='26' text-anchor='middle' fill='#e2e8f0' font-family='Arial' font-weight='700'>${i}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
 // Gère le bouton + message d'erreur d'un formulaire
 async function withBusy(btn, errEl, fn) {
   btn.disabled = true; errEl.textContent = '';
@@ -75,18 +82,37 @@ function viewManager() {
         <div><label>Âge (25-80)</label><input id="age" type="number" min="25" max="80" value="40"></div>
         <div><label>Nationalité</label><select id="nat">${natOptions()}</select></div>
       </div>
+      <div><label>Photo de manager</label><div id="photos" class="muted">Chargement des photos…</div></div>
       <p class="muted">Réputation, pédagogie et négociation sont tirées au hasard (40-60) et évolueront avec vos résultats.</p>
       <div class="err" id="err"></div>
       <button id="go">Continuer</button>
       <button class="link" id="out">Se déconnecter</button>
     </div>`;
   $('out').onclick = () => sb.auth.signOut();
+
+  let photoUrl = null, hasPhotos = false;
+  sb.storage.from('manager-photos').list('', { limit: 100 }).then(({ data }) => {
+    const files = (data || []).filter((f) => /\.(png|jpe?g|webp)$/i.test(f.name));
+    const box = $('photos');
+    if (!files.length) { box.textContent = "Aucune photo disponible pour l'instant (un avatar par défaut sera utilisé)."; return; }
+    hasPhotos = true; box.className = 'photos';
+    box.innerHTML = files.map((f) => {
+      const url = sb.storage.from('manager-photos').getPublicUrl(f.name).data.publicUrl;
+      return `<img src="${esc(url)}" data-url="${esc(url)}" alt="">`;
+    }).join('');
+    box.querySelectorAll('img').forEach((img) => (img.onclick = () => {
+      box.querySelectorAll('img').forEach((i) => i.classList.remove('sel'));
+      img.classList.add('sel'); photoUrl = img.dataset.url;
+    }));
+  });
+
   $('go').onclick = () => withBusy($('go'), $('err'), async () => {
     const first_name = $('fn').value.trim(), last_name = $('ln').value.trim(), age = +$('age').value;
     if (!first_name || !last_name) throw new Error('Prénom et nom obligatoires.');
     if (age < 25 || age > 80) throw new Error("L'âge doit être compris entre 25 et 80 ans.");
+    if (hasPhotos && !photoUrl) throw new Error('Choisissez une photo de manager.');
     const { error } = await sb.from('managers').insert({
-      user_id: state.user.id, first_name, last_name, age, nationality: $('nat').value,
+      user_id: state.user.id, first_name, last_name, age, nationality: $('nat').value, photo_url: photoUrl,
       reputation: rnd(40, 60), pedagogy: rnd(40, 60), negotiation: rnd(40, 60),
     });
     if (error) throw error;
@@ -161,8 +187,10 @@ async function renderTab() {
         <div class="card stat"><span class="muted">Points UCI</span><b>${t.uci_points}</b></div>
         <div class="card stat"><span class="muted">Effectif</span><b>${count ?? 0} coureurs</b></div>
       </div>
-      <div class="card"><h3>Manager : ${esc(m.first_name)} ${esc(m.last_name)} (${m.age} ans, ${esc(NATS[m.nationality] || m.nationality)})</h3>
-        ${attr('Réputation', m.reputation)}${attr('Pédagogie', m.pedagogy)}${attr('Négociation', m.negotiation)}</div>`;
+      <div class="card" style="display:flex;gap:1rem;align-items:center">
+        <img class="avatar" src="${esc(avatarSrc(m))}" alt="">
+        <div style="flex:1"><h3>Manager : ${esc(m.first_name)} ${esc(m.last_name)} (${m.age} ans, ${esc(NATS[m.nationality] || m.nationality)})</h3>
+        ${attr('Réputation', m.reputation)}${attr('Pédagogie', m.pedagogy)}${attr('Négociation', m.negotiation)}</div></div>`;
   } else if (state.tab === 'ranking') {
     const { data } = await sb.from('teams').select('name, nationality, uci_points').order('uci_points', { ascending: false });
     c.innerHTML = `<h2>Classement UCI</h2><div class="card"><table>${(data || []).map((x, i) =>

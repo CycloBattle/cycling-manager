@@ -140,3 +140,5 @@ textarea { width:100%; background:#1f2937; color:var(--txt); border:1px solid #3
 .fm-main button { font-size:.82rem; padding:.5rem .55rem; letter-spacing:.01em; white-space:nowrap; }
 .fm-tools input { width:150px; }
 @media (min-width:1500px) { .fm-main { flex-wrap:nowrap; } }
+.tlogo { width:44px; height:44px; border-radius:8px; object-fit:contain; background:#ffffff14; }
+.logorow { display:flex; align-items:center; gap:.75rem; padding:.4rem 0; border-bottom:1px solid #2b3445; }

@@ -36,7 +36,7 @@ document.addEventListener('click', (e) => { const a = e.target.closest('[data-ri
 
 async function renderRider(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
-  const g = state.game, mine = state.team.id;
+  const g = state.game, mine = state.team.id, mineIds = myTeamIds();
   const { data: r0, error } = await sb.from('riders').select('*').eq('id', state.rid || '').maybeSingle();
   if (!r0) {
     c.innerHTML = `<div class="panel"><h4>Coureur introuvable</h4><div class="muted">${esc(error?.message || 'Aucun coureur sélectionné : revenez au tableau et cliquez sur un nom.')}</div><p><a class="rl" data-back>Retour</a></p></div>`;
@@ -46,7 +46,7 @@ async function renderRider(c) {
   const [mates, res, sc, obs, ai, tms, myObs] = await Promise.all([
     r0.team_id ? sb.from('riders').select('*').eq('team_id', r0.team_id) : Promise.resolve({ data: [r0] }),
     sb.from('race_results').select('position, uci_points, races(date)').eq('rider_id', r0.id),
-    r0.team_id === mine ? Promise.resolve({ data: null }) : sb.from('scouting_reports').select('knowledge').eq('team_id', mine).eq('rider_id', r0.id).maybeSingle(),
+    mineIds.includes(r0.team_id) ? Promise.resolve({ data: null }) : sb.from('scouting_reports').select('knowledge').eq('team_id', mine).eq('rider_id', r0.id).maybeSingle(),
     sb.from('rider_observations').select('observer_ai_id, observer_team_id').eq('rider_id', r0.id),
     sb.from('ai_clubs').select('id, name'),
     sb.from('teams').select('id, name, official_name'),
@@ -54,7 +54,7 @@ async function renderRider(c) {
   ]);
   const r = enrich(mates.data || [r0], g.game_date).find((x) => x.id === r0.id);
   // Brouillard de guerre : notes à 50 % de connaissance, potentiel et détails à 75 %
-  const own = r0.team_id === mine, kn = own ? 100 : (sc.data?.knowledge ?? 0), known = kn >= 50, deep = kn >= 75;
+  const own = mineIds.includes(r0.team_id), kn = own ? 100 : (sc.data?.knowledge ?? 0), known = kn >= 50, deep = kn >= 75;
   const names = { ...Object.fromEntries((ai.data || []).map((x) => [x.id, x.name])), ...Object.fromEntries((tms.data || []).map((x) => [x.id, x.official_name || x.name])) };
   const watchers = (obs.data || []).filter((o) => o.observer_team_id !== mine).map((o) => names[o.observer_ai_id || o.observer_team_id] || 'Club');
   const watching = (obs.data || []).some((o) => o.observer_team_id === mine), used = (myObs.data || []).length;

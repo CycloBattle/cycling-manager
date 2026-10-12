@@ -159,11 +159,11 @@ const PROFILES = { FLAT: 'Plat', MOUNTAIN: 'Montagne', HILLS: 'Vallonné', COBBL
 const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
   portal: { label: 'PORTAIL', subs: [['portal', 'Portail'], ['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
-  squad: { label: 'EFFECTIF', subs: [['squad', 'Équipe première'], ['staff', 'Staff & encadrement']] },
+  squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
   tactics: { label: 'TACTIQUES', subs: [['races', 'Engagements de course'], ['calendar', 'Calendrier']] },
   recruit: { label: 'RECRUTEMENT', subs: [['search', 'Base de données cyclistes'], ['market', 'Marché des transferts']] },
   training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
-  club: { label: 'CLUB', subs: [['contracts', 'Sponsors & Finances'], ['infra', 'Infrastructures'], ['ranking', 'Classement UCI']] },
+  club: { label: 'CLUB', subs: [['contracts', 'Sponsors & Finances'], ['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
 };
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
@@ -240,13 +240,7 @@ async function renderTab() {
       `<tr><td>${i + 1}</td><td>${esc(x.official_name || x.name)} (${esc(x.nationality)})</td><td>${x.uci_points} pts</td></tr>`).join('')}</table></div>`;
     return;
   }
-  if (tab === 'squad') {
-    const { data } = await sb.from('riders').select('*').eq('team_id', state.team.id).order('last_name');
-    const cols = [['flat', 'Plat'], ['mountain', 'Mont.'], ['hills', 'Côtes'], ['time_trial', 'CLM'], ['sprint', 'Sprint'], ['cobbles', 'Pavés'], ['stamina', 'Endur.'], ['recovery', 'Récup.']];
-    c.innerHTML = `<div class="panel" style="overflow:auto"><h4>Équipe première</h4><table class="fm"><tr><th>Coureur</th><th>Âge</th>${cols.map((x) => `<th>${x[1]}</th>`).join('')}<th>Fatigue</th></tr>${(data || []).map((r) =>
-      `<tr><td>${esc(r.first_name)} ${esc(r.last_name)} <span class="muted">${esc(r.nationality)}</span></td><td>${r.age}</td>${cols.map((x) => `<td>${r[x[0]]}</td>`).join('')}<td class="${r.fatigue > 60 ? 'down' : ''}">${r.fatigue}</td></tr>`).join('')}</table></div>`;
-    return;
-  }
+  if (['squad', 'squad_pro', 'squad_u23'].includes(tab)) return renderSquad(c, tab);
   if (tab === 'searchres') {
     const q = state.q.replace(/[^\p{L}\p{N} '-]/gu, '');
     const { data } = await sb.from('riders').select('first_name, last_name, age, nationality, teams(name)').or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`).limit(50);

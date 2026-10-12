@@ -232,6 +232,7 @@ function viewGame() {
 
 async function renderTab() {
   const c = $('content'), tab = state.tab;
+  if (tab === 'rider') return renderRider(c);
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
   if (tab === 'contracts') return renderSponsors(c);
   if (tab === 'ranking') {
@@ -243,9 +244,9 @@ async function renderTab() {
   if (['squad', 'squad_pro', 'squad_u23'].includes(tab)) return renderSquad(c, tab);
   if (tab === 'searchres') {
     const q = state.q.replace(/[^\p{L}\p{N} '-]/gu, '');
-    const { data } = await sb.from('riders').select('first_name, last_name, age, nationality, teams(name)').or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`).limit(50);
+    const { data } = await sb.from('riders').select('id, first_name, last_name, age, nationality, teams(name)').or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`).limit(50);
     c.innerHTML = `<div class="panel"><h4>Résultats pour « ${esc(q)} »</h4><table class="fm">${(data || []).map((r) =>
-      `<tr><td>${esc(r.first_name)} ${esc(r.last_name)}</td><td>${r.age} ans</td><td>${esc(r.nationality)}</td><td>${esc(r.teams?.name || 'Libre')}</td></tr>`).join('') || '<tr><td class="muted">Aucun coureur trouvé.</td></tr>'}</table>
+      `<tr><td><a class="rl" data-rider="${r.id}">${esc(r.first_name)} ${esc(r.last_name)}</a></td><td>${r.age} ans</td><td>${esc(r.nationality)}</td><td>${esc(r.teams?.name || 'Libre')}</td></tr>`).join('') || '<tr><td class="muted">Aucun coureur trouvé.</td></tr>'}</table>
       <p class="muted">Les notes des coureurs adverses sont masquées sans scouting.</p></div>`;
     return;
   }

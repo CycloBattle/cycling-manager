@@ -76,7 +76,7 @@ async function renderSquad(c, tab) {
   const t = state.team, g = state.game;
   if (tab !== sq.lastTab) { sq.squad = { squad_pro: 'pro', squad_u23: 'u23' }[tab] || 'all'; sq.spec = 'all'; sq.lastTab = tab; sq.sel.clear(); }
   const [rs, en] = await Promise.all([
-    sb.from('riders').select('*').eq('team_id', t.id),
+    sb.from('riders').select('*').in('team_id', myTeamIds()),
     state.nextRace ? sb.from('race_entries').select('race_entry_riders(rider_id)').eq('team_id', t.id).eq('race_id', state.nextRace.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
   const ids = (rs.data || []).map((r) => r.id);
@@ -87,7 +87,8 @@ async function renderSquad(c, tab) {
     o.days++; if (x.position === 1) o.wins++; if (x.position <= 3) o.pods++; o.pts += x.uci_points || 0;
   });
   const picked = new Set((en.data?.race_entry_riders || []).map((x) => x.rider_id));
-  sq.all = enrich(rs.data || [], g.game_date).map((r) => ({ ...r, selected: picked.has(r.id), days: 0, wins: 0, pods: 0, pts: 0, ...(st[r.id] || {}) }));
+  const devId = state.devTeam?.id, every = rs.data || [];
+  sq.all = [...enrich(every.filter((r) => r.team_id !== devId), g.game_date), ...enrich(every.filter((r) => r.team_id === devId), g.game_date)].map((r) => ({ ...r, dev: r.team_id === devId, selected: picked.has(r.id), days: 0, wins: 0, pods: 0, pts: 0, ...(st[r.id] || {}) }));
   const caps = new Set(sq.all.slice().sort((a, b) => b.age + b.level - (a.age + a.level)).slice(0, 2).map((r) => r.id));
   sq.all.forEach((r) => { r.captain = caps.has(r.id); r.moral = moralOf(r); });
   drawSquad(c);
@@ -118,7 +119,7 @@ function sideWidgets(all, g) {
 
 function drawOverview(c) {
   const g = state.game, t = state.team, all = sq.all, side = sideWidgets(all, g);
-  let rows = all.filter((r) => sq.squad === 'all' || (sq.squad === 'u23' ? r.u23 : !r.u23)).filter((r) => sq.spec === 'all' || r.spec === sq.spec);
+  let rows = all.filter((r) => sq.squad === 'all' || (sq.squad === 'u23' ? r.dev : !r.dev)).filter((r) => sq.spec === 'all' || r.spec === sq.spec);
   const { k, d } = sq.sort, val = (r) => (k === 'name' ? r.last_name : k === 'nat' ? r.nationality : r[k] ?? 0);
   rows.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * d; });
   const keys = VIEWS[sq.view][1], sel = (o, cur, id) => `<select data-ctl="${id}">${Object.entries(o).map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
@@ -158,13 +159,14 @@ function drawOverview(c) {
 
 function drawFull(c) {
   const t = state.team, u23 = sq.lastTab === 'squad_u23';
-  const base = sq.all.filter((r) => (u23 ? r.u23 : !r.u23));
+  if (u23 && !state.devTeam) { c.innerHTML = '<div class="panel"><h4>Équipe Développement (U23)</h4><p class="muted">Cette équipe n\'a pas d\'équipe de développement.</p></div>'; return; }
+  const base = sq.all.filter((r) => (u23 ? r.dev : !r.dev));
   const { k, d } = sq.sort, val = (r) => (k === 'name' ? r.last_name : k === 'nat' ? r.nationality : r[k] ?? 0);
   const rows = base.filter((r) => sq.spec === 'all' || r.spec === sq.spec).sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * d; });
   const keys = ['status2', 'name', 'spec', 'level', 'pot', 'days', 'wins', 'pods', 'pts', 'form2', 'fatigue', 'moral', 'age', 'nat', 'end', 'salary', 'value'];
   const cnt = (s) => (s === 'all' ? base.length : base.filter((r) => r.spec === s).length);
   c.innerHTML = `<div class="panel full"><h4>${u23 ? 'Équipe Développement (U23)' : 'Équipe Pro'}</h4>
-    <div class="sq-bar"><div><b>${esc(t.official_name || t.name)}</b><div class="muted">Coureurs : ${rows.length} / ${base.length}${sq.sel.size ? ` · ${sq.sel.size} sélectionné(s)` : ''}</div></div>
+    <div class="sq-bar"><div><b>${esc(u23 ? state.devTeam.name : t.official_name || t.name)}</b><div class="muted">Coureurs : ${rows.length} / ${base.length}${sq.sel.size ? ` · ${sq.sel.size} sélectionné(s)` : ''}</div></div>
       <div class="pills">${Object.keys(SPEC_FILTERS).map((s) => `<button data-spec="${s}" class="pill ${sq.spec === s ? 'on' : ''}" title="${SPEC_FILTERS[s]}">${s === 'all' ? 'TOUS' : s} <small>${cnt(s)}</small></button>`).join('')}</div></div>
     <div class="tbl tall"><table class="fm sq"><thead><tr><th><input type="checkbox" data-selall ${rows.length && rows.every((r) => sq.sel.has(r.id)) ? 'checked' : ''}></th>
       ${keys.map((x) => `<th data-sort="${COLS[x][1]}">${COLS[x][0]}${COLS[x][1] === k ? (d < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>

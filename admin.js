@@ -39,7 +39,34 @@ async function importRiders(rows, wipe) {
     flat: a[7], mountain: a[0], hills: Math.round((a[1] + a[2]) / 2), time_trial: a[5], sprint: a[9], cobbles: a[8], stamina: a[11], recovery: a[13],
     potential: r.pot, contract_salary: r.salary, release_clause: r.clause, contract_end_year: season + 1 + (i % 3), fatigue: 0 }; });
   for (let i = 0; i < recs.length; i += 40) { const { error } = await sb.from('riders').insert(recs.slice(i, i + 40)); if (error) throw error; }
+  const base = (n) => n.replace(/\s+(Dev(elopment)? Team|Team|WT)$/i, ''), names = Object.keys(teamId), isDev = (n) => /dev(elopment)? team/i.test(n);
+  for (const n of names.filter(isDev)) {   // rattache chaque Dev Team à son équipe pro
+    const p = names.find((x) => !isDev(x) && base(x) === base(n));
+    if (p) await sb.from('teams').update({ parent_team_id: teamId[p] }).eq('id', teamId[n]);
+  }
   return Object.keys(teamId).length;
+}
+
+async function renderLogos() {
+  const box = $('logos'); if (!box) return;
+  const { data } = await sb.from('teams').select('id, name, logo_url, category').order('name');
+  box.innerHTML = '<h4>Logos des équipes</h4><p class="muted">PNG, JPG ou WebP, de préférence carré (1 Mo maximum).</p>' + (data || []).map((t) =>
+    `<div class="logorow"><img class="tlogo" src="${esc(logoSrc(t))}" alt=""><div style="flex:1">${esc(t.name)} <span class="muted">${t.category === 'DEV' ? 'Dev Team' : 'WorldTour'}</span></div><input type="file" accept="image/png,image/jpeg,image/webp" data-logo="${t.id}" style="width:auto"></div>`).join('');
+  box.onchange = async (e) => {
+    const id = e.target.dataset.logo, f = e.target.files?.[0];
+    if (!id || !f) return;
+    const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' }[f.type];
+    if (!ext) return toast('Format non accepté (PNG, JPG ou WebP).');
+    if (f.size > 1024 * 1024) return toast('Logo trop lourd (1 Mo maximum).');
+    const path = `team-${id}.${ext}`;
+    const { error } = await sb.storage.from('team-logos').upload(path, f, { upsert: true, contentType: f.type });
+    if (error) return toast(error.message);
+    const url = sb.storage.from('team-logos').getPublicUrl(path).data.publicUrl + '?v=' + Date.now();
+    const { error: e2 } = await sb.from('teams').update({ logo_url: url }).eq('id', id);
+    if (e2) return toast(e2.message);
+    if (state.team.id === id) state.team.logo_url = url;
+    toast('Logo enregistré.'); renderLogos();
+  };
 }
 
 function renderAdmin(c) {
@@ -49,7 +76,9 @@ function renderAdmin(c) {
     <textarea id="imp" rows="12" placeholder="Maurice Ballerstedt;16.01.2001;25;Allemagne;Alpecin-Premier Tech WT;57,59,65,72,70,66,68,72,68,71,71,67,68,66;3.5/6;500;350000"></textarea>
     <label style="margin-top:.5rem"><input type="checkbox" id="wipe" checked style="width:auto"> Supprimer d'abord tous les coureurs existants (coureurs de test)</label>
     <div class="sq-ctl" style="margin:.6rem 0"><button id="an">Analyser</button><button id="go" disabled>Importer</button></div>
-    <pre id="rep" class="muted" style="white-space:pre-wrap"></pre></div>`;
+    <pre id="rep" class="muted" style="white-space:pre-wrap"></pre></div>
+    <div class="panel" id="logos" style="margin-top:.75rem"></div>`;
+  renderLogos();
   let parsed = null;
   $('an').onclick = () => {
     parsed = parseRiders($('imp').value);

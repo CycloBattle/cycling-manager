@@ -13,9 +13,9 @@ function enrich(riders, today) {
     const top = ['flat', 'mountain', 'hills', 'time_trial', 'sprint', 'cobbles'].map((k) => r[k] || 0).sort((a, b) => b - a);
     const level = Math.round((top[0] + top[1] + top[2]) / 3);
     const best = Object.keys(map).reduce((a, k) => ((r[k] || 0) > (r[a] || 0) ? k : a), 'mountain');
-    const pot = Math.min(95, Math.round(level + Math.max(0, 28 - r.age) * 1.6));
+    const pot = r.potential != null ? Math.round(35 + Number(r.potential) * 12) : Math.min(95, Math.round(level + Math.max(0, 28 - r.age) * 1.6));
     const value = Math.round(((level - 30) ** 2 * 900 * (1 + Math.max(0, 30 - r.age) * 0.06) * (1 + (pot - level) / 60)) / 1000) * 1000;
-    return { ...r, level, pot, value, spec: level < 50 ? 'EQP' : level >= 50 && top[0] - top[2] <= 5 ? 'PST' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
+    return { ...r, level, pot, value, clause: r.release_clause != null ? Number(r.release_clause) : null, spec: level < 66 ? 'EQP' : top[0] - top[2] <= 3 ? 'PST' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
   });
   const byLevel = out.slice().sort((a, b) => b.level - a.level);
   byLevel.forEach((r, i) => { r.role = i < 2 ? 'Leader' : null; });
@@ -57,7 +57,7 @@ const COLS = {
   pot: ['Potentiel', 'pot', (r) => stars(r.pot)],
   form: ['Forme', 'form', (r) => bar(r.form)],
   fatigue: ['Fatigue', 'fatigue', (r) => bar(r.fatigue || 0, true)],
-  value: ['Valeur / libération', 'value', (r) => fmtEUR(r.value)],
+  value: ['Clause libératoire', 'value', (r) => fmtEUR(r.clause ?? r.value)],
   salary: ['Salaire', 'contract_salary', (r) => `${fmtEUR(r.contract_salary || 0)} / mois`],
   end: ['Fin de contrat', 'contract_end_year', (r) => (r.contract_end_year ? `31/12/${r.contract_end_year}` : '-')],
   injury: ['Blessure', 'injured', (r) => (r.injured ? `${esc(r.injury_type || 'Blessure')} : retour le ${fmtShort(r.injured_until)}` : '-')],

@@ -36,8 +36,12 @@ document.addEventListener('click', (e) => { const a = e.target.closest('[data-ri
 async function renderRider(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const g = state.game, mine = state.team.id;
-  const { data: r0 } = await sb.from('riders').select('*, teams(name, official_name, logo_url)').eq('id', state.rid).single();
-  if (!r0) { c.innerHTML = '<div class="panel">Coureur introuvable.</div>'; return; }
+  const { data: r0, error } = await sb.from('riders').select('*').eq('id', state.rid || '').maybeSingle();
+  if (!r0) {
+    c.innerHTML = `<div class="panel"><h4>Coureur introuvable</h4><div class="muted">${esc(error?.message || 'Aucun coureur sélectionné : revenez au tableau et cliquez sur un nom.')}</div><p><a class="rl" data-back>Retour</a></p></div>`;
+    c.querySelector('[data-back]').onclick = () => step(-1); return;
+  }
+  r0.teams = r0.team_id ? (await sb.from('teams').select('*').eq('id', r0.team_id).maybeSingle()).data : null;
   const [mates, res, sc] = await Promise.all([
     r0.team_id ? sb.from('riders').select('*').eq('team_id', r0.team_id) : Promise.resolve({ data: [r0] }),
     sb.from('race_results').select('position, uci_points, races(date)').eq('rider_id', r0.id),

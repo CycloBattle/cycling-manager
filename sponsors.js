@@ -53,7 +53,7 @@ function evaluateContract(contract, ctx) {
 async function loadSponsorCtx() {
   const tid = state.team.id;
   const [riders, catalog, mine, races, staff, infra, gs, countries] = await Promise.all([
-    sb.from('riders').select('id, nationality, age, contract_salary').eq('team_id', tid),
+    sb.from('riders').select('id, nationality, age, contract_salary').in('team_id', myTeamIds()),
     sb.from('sponsors_catalog').select('*'),
     sb.from('team_sponsors').select('*, sponsors_catalog(*)').eq('team_id', tid).order('slot_type'),
     sb.from('races').select('date, status'),

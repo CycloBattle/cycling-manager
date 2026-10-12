@@ -123,7 +123,7 @@ function viewManager() {
 }
 
 // ---------- Écran 3 : création de l'équipe (Conti-Pro imposée) ----------
-function viewTeam() {
+function viewTeamLegacy() {
   $app.innerHTML = `
     <div class="card narrow">
       <h1>Votre équipe</h1>
@@ -153,6 +153,39 @@ function viewTeam() {
   });
 }
 
+// ---------- Écran 3 : choix d'une équipe officielle ----------
+async function viewTeam() {
+  $app.innerHTML = '<div class="card narrow"><p class="muted">Chargement des équipes…</p></div>';
+  const [tm, rd] = await Promise.all([
+    sb.from('teams').select('*').is('manager_id', null).order('name'),
+    sb.from('riders').select('*').not('team_id', 'is', null),
+  ]);
+  const lvl = (r) => {
+    let a = [r.mtn, r.mm, r.hil, r.ttr, r.fla, r.cob, r.spr, r.acc].filter((x) => x != null);
+    if (!a.length) a = [r.flat, r.mountain, r.hills, r.time_trial, r.sprint, r.cobbles].filter((x) => x != null);
+    return a.sort((x, y) => y - x).slice(0, 3).reduce((s, x) => s + x, 0) / 3;
+  };
+  const by = {}; (rd.data || []).forEach((r) => (by[r.team_id] = by[r.team_id] || []).push(r));
+  const teams = tm.data || [];
+  $app.innerHTML = `<div class="pickwrap"><h1>Choisissez votre équipe</h1>
+    <p class="muted">Votre budget de départ est de 50 000 € : il faudra signer des sponsors pour financer la saison.</p><div class="err" id="err"></div>
+    <div class="grid2">${teams.map((t) => {
+      const rs = by[t.id] || [], pay = rs.reduce((s, r) => s + Number(r.contract_salary || 0), 0), star = rs.slice().sort((a, b) => lvl(b) - lvl(a))[0];
+      return `<div class="card offer"><div class="head"><b>${esc(t.name)}</b><span class="badge ${t.category === 'DEV' ? '' : 'warn'}">${t.category === 'DEV' ? 'Dev Team' : 'WorldTour'}</span></div>
+        <ul class="kv"><li>${rs.length} coureurs</li><li>Masse salariale : ${fmtEUR(pay)} / mois</li><li>Star : ${star ? esc(star.first_name + ' ' + star.last_name) : '-'}</li></ul>
+        <button data-team="${t.id}">Choisir cette équipe</button></div>`;
+    }).join('') || '<div class="card muted">Aucune équipe officielle disponible : les coureurs ne sont pas encore importés.<br><br><button id="legacy">Créer une équipe libre (mode test)</button></div>'}</div>
+    <p><button class="link" id="out">Se déconnecter</button></p></div>`;
+  $app.querySelectorAll('[data-team]').forEach((b) => (b.onclick = async () => {
+    b.disabled = true;
+    const { error } = await sb.rpc('claim_team', { p_team: b.dataset.team });
+    if (error) { $('err').textContent = error.message; b.disabled = false; return; }
+    await route();
+  }));
+  if ($('legacy')) $('legacy').onclick = viewTeamLegacy;
+  $('out').onclick = () => sb.auth.signOut();
+}
+
 // ---------- Écran 4 : jeu (disposition type Football Manager) ----------
 Object.assign(state, { menu: 'portal', tab: 'portal', hist: [['portal', 'portal']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '' });
 const PROFILES = { FLAT: 'Plat', MOUNTAIN: 'Montagne', HILLS: 'Vallonné', COBBLES: 'Pavés', TIME_TRIAL: 'Contre-la-montre' };
@@ -160,10 +193,11 @@ const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
   portal: { label: 'PORTAIL', subs: [['portal', 'Portail'], ['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
-  tactics: { label: 'TACTIQUES', subs: [['races', 'Engagements de course'], ['calendar', 'Calendrier']] },
+  tactics: { label: 'TACTIQUES DE COURSE', subs: [['races', 'Engagements de course'], ['calendar', 'Calendrier']] },
   recruit: { label: 'RECRUTEMENT', subs: [['search', 'Base de données cyclistes'], ['market', 'Marché des transferts']] },
   training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
-  club: { label: 'CLUB', subs: [['contracts', 'Sponsors & Finances'], ['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
+  finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
+  club: { label: 'CLUB', subs: [['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
 };
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
@@ -193,7 +227,8 @@ async function continueGame() {
     const d = gd(state.game.game_date); d.setDate(d.getDate() + 1);
     const { error } = await sb.from('game_state').update({ game_date: d.toISOString().slice(0, 10) }).eq('id', 1);
     if (error) return toast(error.message);
-    toast('Jour suivant.');
+    const o = await sb.rpc('advance_observations');
+    toast(o.error ? 'Jour suivant (observations : ' + o.error.message + ')' : 'Jour suivant.');
   } else toast("Seul l'administrateur fait avancer le temps : date synchronisée.");
   await loadGame(); viewGame();
 }
@@ -233,6 +268,7 @@ function viewGame() {
 async function renderTab() {
   const c = $('content'), tab = state.tab;
   if (tab === 'rider') return renderRider(c);
+  if (tab === 'admin') return renderAdmin(c);
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
   if (tab === 'contracts') return renderSponsors(c);
   if (tab === 'ranking') {

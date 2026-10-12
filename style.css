@@ -103,3 +103,13 @@ table.fm td, table.fm th { padding:.3rem .35rem; border-top:1px solid #2b3445; }
 .bd.red { background:#b91c1c; } .bd.blue { background:#1d4ed8; } .bd.violet { background:#6d28d9; } .bd.green { background:#15803d; } .bd.amber { background:#b45309; } .bd.spec { background:#374151; }
 .mini { display:inline-block; width:54px; height:7px; background:#374151; border-radius:99px; overflow:hidden; vertical-align:middle; } .mini i { display:block; height:100%; background:#22c55e; } .mini i.lo { background:#ef4444; }
 @media (max-width:1100px) { .sq-layout { grid-template-columns:1fr; } .icards { grid-template-columns:1fr; } }
+
+/* ===== Équipe Pro / Développement : grand tableau ===== */
+.panel.full { width:100%; }
+.tbl.tall { max-height:76vh; } table.sq { font-size:.82rem; } table.sq td, table.sq th { padding:.35rem .5rem; }
+.pills { display:flex; gap:.3rem; flex-wrap:wrap; }
+.pill { background:#14532d; color:#dcfce7; border:1px solid #166534; padding:.25rem .7rem; font-size:.78rem; font-weight:700; border-radius:4px; }
+.pill small { opacity:.7; font-weight:500; } .pill.on { background:#16a34a; color:#fff; border-color:#4ade80; }
+.seg { display:inline-flex; gap:2px; vertical-align:middle; } .seg i { width:7px; height:12px; background:#374151; border-radius:1px; } .seg i.on { background:#22c55e; }
+.bd.gold { background:#a16207; }
+.mo { font-weight:600; } .mo.ok { color:#4ade80; } .mo.ok2 { color:#a3e635; } .mo.warn { color:#fb923c; } .mo.bad { color:#f87171; }

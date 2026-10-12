@@ -48,7 +48,7 @@ const COLS = {
   form2: ['Forme du jour', 'form', (r) => seg(r.form)],
   moral: ['Moral', 'moral', (r) => { const [l, c] = moralLabel(r.moral); return `<span class="mo ${c}">${l}</span>`; }],
   status: ['Statut', 'injured', badges],
-  name: ['Coureur', 'name', (r) => `<span class="av">${esc((r.first_name[0] || '') + (r.last_name[0] || ''))}</span>${esc(r.first_name)} ${esc(r.last_name)}`],
+  name: ['Coureur', 'name', (r) => `<a class="rl" data-rider="${r.id}"><span class="av">${esc((r.first_name[0] || '') + (r.last_name[0] || ''))}</span>${esc(r.first_name)} ${esc(r.last_name)}</a>`],
   spec: ['Spécialité', 'spec', (r) => `<span class="bd spec" title="${SPEC_NAMES[r.spec]}">${r.spec}</span> ${SPEC_NAMES[r.spec]}`],
   role: ['Rôle', 'role', (r) => r.role],
   age: ['Âge', 'age', (r) => r.age],

@@ -130,3 +130,8 @@ table.fm td, table.fm th { padding:.3rem .35rem; border-top:1px solid #2b3445; }
 .scards { display:grid; grid-template-columns:repeat(4,1fr); gap:.75rem; }
 .scard { background:rgba(17,24,39,.85); border:1px solid var(--line); border-radius:6px; padding:.75rem; } .scard h5 { margin:0 0 .5rem; color:#f9a8d4; text-transform:uppercase; font-size:.8rem; }
 @media (max-width:1000px) { .rcols, .scards { grid-template-columns:1fr; } }
+.obs { position:relative; cursor:default; }
+.obs-pop { display:none; position:absolute; top:130%; left:0; z-index:30; background:#0b1020; border:1px solid #4b5563; border-radius:6px; padding:.6rem .8rem; min-width:260px; font-weight:400; font-size:.8rem; text-align:left; line-height:1.5; box-shadow:0 8px 24px rgba(0,0,0,.5); }
+.obs:hover .obs-pop { display:block; } .obs-pop b { display:block; margin-bottom:.3rem; color:#f9a8d4; }
+.pickwrap { max-width:1100px; margin:4vh auto; padding:0 1rem; }
+textarea { width:100%; background:#1f2937; color:var(--txt); border:1px solid #374151; border-radius:8px; padding:.6rem; font-family:monospace; font-size:.8rem; }

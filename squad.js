@@ -1,5 +1,5 @@
 // squad.js — Effectif > Vue d'ensemble (utilise sb, state, esc, fmtEUR, fmtShort, gd, PROFILES, $, toast d'app.js)
-const SPEC_NAMES = { G: 'Grimpeur', S: 'Sprinteur', R: 'Rouleur / CLM', P: 'Puncheur', F: 'Flandrien', EQ: 'Équipier' };
+const SPEC_NAMES = { MTN: 'Grimpeur', VAL: 'Puncheur', CLM: 'Rouleur / CLM', SPR: 'Sprinteur', FLA: 'Flandrien', PST: 'Polyvalent', EQP: 'Équipier' };
 const sq = { view: 'general', squad: 'all', spec: 'all', sort: { k: 'level', d: -1 }, sel: new Set(), lastTab: null, all: [] };
 const STAT_KEYS = [['flat', 'Plat'], ['mountain', 'Mont.'], ['hills', 'Côtes'], ['time_trial', 'CLM'], ['sprint', 'Sprint'], ['cobbles', 'Pavés'], ['stamina', 'Endur.'], ['recovery', 'Récup.']];
 const starV = (v) => Math.max(0.5, Math.min(5, Math.round(((v - 35) / 12) * 2) / 2));
@@ -8,14 +8,14 @@ const flag = (c) => `<img class="flag" src="https://flagcdn.com/w20/${esc(String
 
 // Niveau, potentiel, spécialité, rôle et valeur sont calculés à partir des notes (aucune colonne dédiée en base)
 function enrich(riders, today) {
-  const map = { mountain: 'G', sprint: 'S', time_trial: 'R', hills: 'P', cobbles: 'F' };
+  const map = { mountain: 'MTN', sprint: 'SPR', time_trial: 'CLM', hills: 'VAL', cobbles: 'FLA' };
   const out = riders.map((r) => {
     const top = ['flat', 'mountain', 'hills', 'time_trial', 'sprint', 'cobbles'].map((k) => r[k] || 0).sort((a, b) => b - a);
     const level = Math.round((top[0] + top[1] + top[2]) / 3);
     const best = Object.keys(map).reduce((a, k) => ((r[k] || 0) > (r[a] || 0) ? k : a), 'mountain');
     const pot = Math.min(95, Math.round(level + Math.max(0, 28 - r.age) * 1.6));
     const value = Math.round(((level - 30) ** 2 * 900 * (1 + Math.max(0, 30 - r.age) * 0.06) * (1 + (pot - level) / 60)) / 1000) * 1000;
-    return { ...r, level, pot, value, spec: level < 50 ? 'EQ' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
+    return { ...r, level, pot, value, spec: level < 50 ? 'EQP' : level >= 50 && top[0] - top[2] <= 5 ? 'PST' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
   });
   const byLevel = out.slice().sort((a, b) => b.level - a.level);
   byLevel.forEach((r, i) => { r.role = i < 2 ? 'Leader' : null; });
@@ -29,7 +29,24 @@ const badges = (r) => [r.injured && '<span class="bd red">Blessé</span>', r.sel
   !r.injured && r.fatigue <= 25 && '<span class="bd green">Forme</span>', r.fatigue > 60 && '<span class="bd amber">Fatigué</span>'].filter(Boolean).join(' ');
 const bar = (v, inv) => `<span class="mini"><i class="${(inv ? 100 - v : v) < 40 ? 'lo' : ''}" style="width:${v}%"></i></span> ${v}%`;
 
+const hashId = (x) => ([...String(x)].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 15) - 7;
+const moralOf = (r) => Math.max(0, Math.min(100, Math.round(78 - (r.fatigue || 0) * 0.4 - (r.injured ? 15 : 0) + (r.role === 'Leader' ? 6 : 0) + (r.selected ? 5 : 0) + hashId(r.id))));
+const moralLabel = (m) => (m >= 75 ? ['Ravi', 'ok'] : m >= 55 ? ['Satisfait', 'ok2'] : m >= 40 ? ['Préoccupé', 'warn'] : ['Mécontent', 'bad']);
+const medLabel = (r) => (/chute/i.test(r.injury_type || '') ? 'Chute' : /malad/i.test(r.injury_type || '') ? 'Malade' : 'Blessé');
+const badgesFull = (r) => [
+  r.injured ? `<span class="bd red">${medLabel(r)}</span>` : r.fatigue > 75 ? '<span class="bd red">Épuisé</span>' : r.fatigue > 50 ? '<span class="bd amber">Fatigué</span>' : r.fatigue <= 25 ? '<span class="bd green">Forme</span>' : '',
+  r.selected && '<span class="bd blue">Sélectionné</span>', r.captain && '<span class="bd gold">Capitaine</span>',
+  ['Leader', 'Poisson-pilote', 'Équipier de luxe'].includes(r.role) && `<span class="bd violet">${r.role}</span>`, r.u23 && '<span class="bd spec">U23</span>'].filter(Boolean).join(' ');
+const seg = (v) => `<span class="seg">${[20, 40, 60, 80, 100].map((t) => `<i class="${v >= t - 10 ? 'on' : ''}"></i>`).join('')}</span> ${v}%`;
+
 const COLS = {
+  status2: ['Statut', 'injured', badgesFull],
+  days: ['J. de course', 'days', (r) => r.days],
+  wins: ['Victoires', 'wins', (r) => r.wins],
+  pods: ['Podiums', 'pods', (r) => r.pods],
+  pts: ['Pts UCI', 'pts', (r) => r.pts],
+  form2: ['Forme du jour', 'form', (r) => seg(r.form)],
+  moral: ['Moral', 'moral', (r) => { const [l, c] = moralLabel(r.moral); return `<span class="mo ${c}">${l}</span>`; }],
   status: ['Statut', 'injured', badges],
   name: ['Coureur', 'name', (r) => `<span class="av">${esc((r.first_name[0] || '') + (r.last_name[0] || ''))}</span>${esc(r.first_name)} ${esc(r.last_name)}`],
   spec: ['Spécialité', 'spec', (r) => `<span class="bd spec" title="${SPEC_NAMES[r.spec]}">${r.spec}</span> ${SPEC_NAMES[r.spec]}`],
@@ -40,9 +57,9 @@ const COLS = {
   pot: ['Potentiel', 'pot', (r) => stars(r.pot)],
   form: ['Forme', 'form', (r) => bar(r.form)],
   fatigue: ['Fatigue', 'fatigue', (r) => bar(r.fatigue || 0, true)],
-  value: ['Valeur estimée', 'value', (r) => fmtEUR(r.value)],
+  value: ['Valeur / libération', 'value', (r) => fmtEUR(r.value)],
   salary: ['Salaire', 'contract_salary', (r) => `${fmtEUR(r.contract_salary || 0)} / mois`],
-  end: ['Fin de contrat', 'contract_end_year', (r) => r.contract_end_year || '-'],
+  end: ['Fin de contrat', 'contract_end_year', (r) => (r.contract_end_year ? `31/12/${r.contract_end_year}` : '-')],
   injury: ['Blessure', 'injured', (r) => (r.injured ? `${esc(r.injury_type || 'Blessure')} : retour le ${fmtShort(r.injured_until)}` : '-')],
   ...Object.fromEntries(STAT_KEYS.map(([k, l]) => [k, [l, k, (r) => r[k]]])),
 };
@@ -52,20 +69,31 @@ const VIEWS = {
   form: ['Forme & Fatigue', ['status', 'name', 'form', 'fatigue', 'recovery', 'injury']],
   contracts: ['Contrats & Salaires', ['name', 'age', 'salary', 'end', 'value']],
 };
-const SPEC_FILTERS = { all: 'Tous les profils', G: 'Grimpeurs', S: 'Sprinteurs', R: 'Rouleurs / CLM', P: 'Puncheurs', F: 'Flandriens', EQ: 'Équipiers' };
+const SPEC_FILTERS = { all: 'Tous les profils', MTN: 'Montagne', VAL: 'Vallons / Puncheur', CLM: 'Contre-la-montre / Rouleur', SPR: 'Sprint', FLA: 'Pavés / Flandrien', PST: 'Piste / Polyvalent', EQP: 'Équipier' };
 
 async function renderSquad(c, tab) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, g = state.game;
-  if (tab !== sq.lastTab) { sq.squad = { squad_pro: 'pro', squad_u23: 'u23' }[tab] || 'all'; sq.lastTab = tab; sq.sel.clear(); }
+  if (tab !== sq.lastTab) { sq.squad = { squad_pro: 'pro', squad_u23: 'u23' }[tab] || 'all'; sq.spec = 'all'; sq.lastTab = tab; sq.sel.clear(); }
   const [rs, en] = await Promise.all([
     sb.from('riders').select('*').eq('team_id', t.id),
     state.nextRace ? sb.from('race_entries').select('race_entry_riders(rider_id)').eq('team_id', t.id).eq('race_id', state.nextRace.id).maybeSingle() : Promise.resolve({ data: null }),
   ]);
+  const ids = (rs.data || []).map((r) => r.id);
+  const res = ids.length ? await sb.from('race_results').select('rider_id, position, uci_points, races(date)').in('rider_id', ids) : { data: [] };
+  const st = {};   // statistiques de la saison en cours
+  (res.data || []).filter((x) => String(x.races?.date || '').slice(0, 4) === String(g.season_year)).forEach((x) => {
+    const o = (st[x.rider_id] = st[x.rider_id] || { days: 0, wins: 0, pods: 0, pts: 0 });
+    o.days++; if (x.position === 1) o.wins++; if (x.position <= 3) o.pods++; o.pts += x.uci_points || 0;
+  });
   const picked = new Set((en.data?.race_entry_riders || []).map((x) => x.rider_id));
-  sq.all = enrich(rs.data || [], g.game_date).map((r) => ({ ...r, selected: picked.has(r.id) }));
+  sq.all = enrich(rs.data || [], g.game_date).map((r) => ({ ...r, selected: picked.has(r.id), days: 0, wins: 0, pods: 0, pts: 0, ...(st[r.id] || {}) }));
+  const caps = new Set(sq.all.slice().sort((a, b) => b.age + b.level - (a.age + a.level)).slice(0, 2).map((r) => r.id));
+  sq.all.forEach((r) => { r.captain = caps.has(r.id); r.moral = moralOf(r); });
   drawSquad(c);
 }
+
+const drawSquad = (c) => (sq.lastTab === 'squad' ? drawOverview(c) : drawFull(c));
 
 function sideWidgets(all, g) {
   const n = all.length || 1, inj = all.filter((r) => r.injured), avgFat = Math.round(all.reduce((s, r) => s + (r.fatigue || 0), 0) / n);
@@ -88,7 +116,7 @@ function sideWidgets(all, g) {
       <div class="muted" style="margin-top:.5rem">Capitaines de route</div>${caps.map((r) => `<div>${esc(r.first_name)} ${esc(r.last_name)} <span class="muted">(${r.age} ans)</span></div>`).join('') || '<div class="muted">-</div>'}</div>` };
 }
 
-function drawSquad(c) {
+function drawOverview(c) {
   const g = state.game, t = state.team, all = sq.all, side = sideWidgets(all, g);
   let rows = all.filter((r) => sq.squad === 'all' || (sq.squad === 'u23' ? r.u23 : !r.u23)).filter((r) => sq.spec === 'all' || r.spec === sq.spec);
   const { k, d } = sq.sort, val = (r) => (k === 'name' ? r.last_name : k === 'nat' ? r.nationality : r[k] ?? 0);
@@ -117,7 +145,7 @@ function drawSquad(c) {
 
   c.onchange = (e) => {
     const x = e.target;
-    if (x.dataset.ctl) { sq[x.dataset.ctl] = x.value; drawSquad(c); }
+    if (x.dataset.ctl) { sq[x.dataset.ctl] = x.value; drawOverview(c); }
     else if (x.dataset.sel) { x.checked ? sq.sel.add(x.dataset.sel) : sq.sel.delete(x.dataset.sel); drawSquad(c); }
     else if ('selall' in x.dataset) { rows.forEach((r) => (x.checked ? sq.sel.add(r.id) : sq.sel.delete(r.id))); drawSquad(c); }
   };
@@ -125,5 +153,30 @@ function drawSquad(c) {
     const th = e.target.closest('th[data-sort]'), ic = e.target.closest('.icard');
     if (th) { const key = th.dataset.sort; sq.sort = sq.sort.k === key ? { k: key, d: -sq.sort.d } : { k: key, d: key === 'name' || key === 'role' || key === 'nat' ? 1 : -1 }; drawSquad(c); }
     else if (ic) ic.classList.toggle('open');
+  };
+}
+
+function drawFull(c) {
+  const t = state.team, u23 = sq.lastTab === 'squad_u23';
+  const base = sq.all.filter((r) => (u23 ? r.u23 : !r.u23));
+  const { k, d } = sq.sort, val = (r) => (k === 'name' ? r.last_name : k === 'nat' ? r.nationality : r[k] ?? 0);
+  const rows = base.filter((r) => sq.spec === 'all' || r.spec === sq.spec).sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'string' ? x.localeCompare(y) : x - y) * d; });
+  const keys = ['status2', 'name', 'spec', 'level', 'pot', 'days', 'wins', 'pods', 'pts', 'form2', 'fatigue', 'moral', 'age', 'nat', 'end', 'salary', 'value'];
+  const cnt = (s) => (s === 'all' ? base.length : base.filter((r) => r.spec === s).length);
+  c.innerHTML = `<div class="panel full"><h4>${u23 ? 'Équipe Développement (U23)' : 'Équipe Pro'}</h4>
+    <div class="sq-bar"><div><b>${esc(t.official_name || t.name)}</b><div class="muted">Coureurs : ${rows.length} / ${base.length}${sq.sel.size ? ` · ${sq.sel.size} sélectionné(s)` : ''}</div></div>
+      <div class="pills">${Object.keys(SPEC_FILTERS).map((s) => `<button data-spec="${s}" class="pill ${sq.spec === s ? 'on' : ''}" title="${SPEC_FILTERS[s]}">${s === 'all' ? 'TOUS' : s} <small>${cnt(s)}</small></button>`).join('')}</div></div>
+    <div class="tbl tall"><table class="fm sq"><thead><tr><th><input type="checkbox" data-selall ${rows.length && rows.every((r) => sq.sel.has(r.id)) ? 'checked' : ''}></th>
+      ${keys.map((x) => `<th data-sort="${COLS[x][1]}">${COLS[x][0]}${COLS[x][1] === k ? (d < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((r) => `<tr class="${r.injured ? 'inj' : ''}"><td><input type="checkbox" data-sel="${r.id}" ${sq.sel.has(r.id) ? 'checked' : ''}></td>${keys.map((x) => `<td>${COLS[x][2](r)}</td>`).join('')}</tr>`).join('') || `<tr><td colspan="${keys.length + 1}" class="muted">Aucun coureur pour ce filtre.</td></tr>`}</tbody></table></div></div>`;
+  c.onchange = (e) => {
+    const x = e.target;
+    if (x.dataset.sel) { x.checked ? sq.sel.add(x.dataset.sel) : sq.sel.delete(x.dataset.sel); drawFull(c); }
+    else if ('selall' in x.dataset) { rows.forEach((r) => (x.checked ? sq.sel.add(r.id) : sq.sel.delete(r.id))); drawFull(c); }
+  };
+  c.onclick = (e) => {
+    const th = e.target.closest('th[data-sort]'), pill = e.target.closest('[data-spec]');
+    if (pill) { sq.spec = pill.dataset.spec; drawFull(c); }
+    else if (th) { const key = th.dataset.sort; sq.sort = sq.sort.k === key ? { k: key, d: -sq.sort.d } : { k: key, d: ['name', 'nat'].includes(key) ? 1 : -1 }; drawFull(c); }
   };
 }

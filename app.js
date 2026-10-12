@@ -44,6 +44,8 @@ async function route() {
   const { data: t } = await sb.from('teams').select('*').eq('manager_id', m.id).maybeSingle();
   state.team = t;
   if (!t) return viewTeam();
+  const { data: dv } = await sb.from('teams').select('*').eq('parent_team_id', t.id).maybeSingle();
+  state.devTeam = dv;
   const { data: p } = await sb.from('profiles').select('is_admin').eq('user_id', state.user.id).maybeSingle();
   state.isAdmin = !!p?.is_admin;
   await loadGame();
@@ -166,13 +168,15 @@ async function viewTeam() {
     return a.sort((x, y) => y - x).slice(0, 3).reduce((s, x) => s + x, 0) / 3;
   };
   const by = {}; (rd.data || []).forEach((r) => (by[r.team_id] = by[r.team_id] || []).push(r));
-  const teams = tm.data || [];
+  const all = tm.data || [], devs = all.filter((t) => t.category === 'DEV' || t.parent_team_id), teams = all.filter((t) => !devs.includes(t));
   $app.innerHTML = `<div class="pickwrap"><h1>Choisissez votre équipe</h1>
-    <p class="muted">Votre budget de départ est de 50 000 € : il faudra signer des sponsors pour financer la saison.</p><div class="err" id="err"></div>
+    <p class="muted">Vous dirigez l'équipe pro et son éventuelle équipe de développement. Budget de départ : 50 000 € : il faudra signer des sponsors.</p><div class="err" id="err"></div>
     <div class="grid2">${teams.map((t) => {
-      const rs = by[t.id] || [], pay = rs.reduce((s, r) => s + Number(r.contract_salary || 0), 0), star = rs.slice().sort((a, b) => lvl(b) - lvl(a))[0];
-      return `<div class="card offer"><div class="head"><b>${esc(t.name)}</b><span class="badge ${t.category === 'DEV' ? '' : 'warn'}">${t.category === 'DEV' ? 'Dev Team' : 'WorldTour'}</span></div>
-        <ul class="kv"><li>${rs.length} coureurs</li><li>Masse salariale : ${fmtEUR(pay)} / mois</li><li>Star : ${star ? esc(star.first_name + ' ' + star.last_name) : '-'}</li></ul>
+      const dv = devs.find((d) => d.parent_team_id === t.id), rs = by[t.id] || [], rd2 = dv ? by[dv.id] || [] : [];
+      const pay = rs.concat(rd2).reduce((s, r) => s + Number(r.contract_salary || 0), 0), star = rs.slice().sort((a, b) => lvl(b) - lvl(a))[0];
+      return `<div class="card offer"><div class="head"><span style="display:flex;gap:.6rem;align-items:center"><img class="tlogo" src="${esc(logoSrc(t))}" alt=""><b>${esc(t.name)}</b></span><span class="badge warn">WorldTour</span></div>
+        <ul class="kv"><li>Équipe pro : ${rs.length} coureurs</li><li>${dv ? `Équipe de développement : ${rd2.length} coureurs (${esc(dv.name)})` : 'Pas d\'équipe de développement'}</li>
+        <li>Masse salariale : ${fmtEUR(pay)} / mois</li><li>Star : ${star ? esc(star.first_name + ' ' + star.last_name) : '-'}</li></ul>
         <button data-team="${t.id}">Choisir cette équipe</button></div>`;
     }).join('') || '<div class="card muted">Aucune équipe officielle disponible : les coureurs ne sont pas encore importés.<br><br><button id="legacy">Créer une équipe libre (mode test)</button></div>'}</div>
     <p><button class="link" id="out">Se déconnecter</button></p></div>`;
@@ -187,7 +191,8 @@ async function viewTeam() {
 }
 
 // ---------- Écran 4 : jeu (disposition type Football Manager) ----------
-Object.assign(state, { menu: 'portal', tab: 'portal', hist: [['portal', 'portal']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '' });
+Object.assign(state, { menu: 'portal', tab: 'portal', hist: [['portal', 'portal']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '', devTeam: null });
+const myTeamIds = () => [state.team?.id, state.devTeam?.id].filter(Boolean);
 const PROFILES = { FLAT: 'Plat', MOUNTAIN: 'Montagne', HILLS: 'Vallonné', COBBLES: 'Pavés', TIME_TRIAL: 'Contre-la-montre' };
 const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
@@ -315,7 +320,7 @@ async function renderPortal(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, g = state.game;
   const [riders, races, teams, sums, mine, free, staff, entries] = await Promise.all([
-    sb.from('riders').select('*').eq('team_id', t.id),
+    sb.from('riders').select('*').in('team_id', myTeamIds()),
     sb.from('races').select('*').order('date'),
     sb.from('teams').select('id, name, official_name, division, uci_points').order('uci_points', { ascending: false }),
     sb.from('race_summaries').select('summary_text, races(name, date)').order('id', { ascending: false }).limit(3),

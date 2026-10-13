@@ -5,20 +5,24 @@ const COUNTRY_CODES = { Allemagne: 'DE', Autriche: 'AT', Belgique: 'BE', Italie:
 
 // Format : Nom;Date de naissance (jj.mm.aaaa);Âge;Pays;Équipe;14 attributs (MTN,MM,HIL,DHI,ATT,TTR,PRL,FLA,COB,SPR,ACC,STA,RES,REC);Potentiel (x/6);Salaire mensuel;Clause
 function parseRiders(text) {
-  const rows = [], errors = [];
-  text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).forEach((line, i) => {
-    if (/^nom\s*;/i.test(line)) return;
-    const f = line.split(';').map((x) => x.trim());
-    if (f.length < 9) return errors.push(`Ligne ${i + 1} : ${f.length} champs au lieu de 9`);
-    const a = f[5].split(',').map(Number);
-    if (a.length !== 14 || a.some((x) => !Number.isFinite(x))) return errors.push(`Ligne ${i + 1} : 14 attributs attendus (${f[0]})`);
-    const code = COUNTRY_CODES[f[3]];
-    if (!code) return errors.push(`Ligne ${i + 1} : pays inconnu « ${f[3]} » (${f[0]})`);
-    const [d, m, y] = f[1].split('.'), parts = f[0].split(' '), pm = f[6].match(/([\d.,]+)\s*\/\s*([\d.,]+)/), num = (s) => parseFloat(String(s).replace(',', '.'));
-    rows.push({ first: parts[0], last: parts.slice(1).join(' '), birth: `${y}-${m}-${d}`, age: +f[2], code, team: f[4], a,
-      pot: pm ? Math.round((num(pm[1]) / num(pm[2])) * 50) / 10 : null, salary: Number(f[7].replace(/\s/g, '')) || 0, clause: Number(f[8].replace(/\s/g, '')) || 0 });
-  });
-  return { rows, errors };
+  const rows = [], errors = [];
+  text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).forEach((line, i) => {
+    if (/^nom\s*;/i.test(line)) return;
+    const f = line.split(';').map((x) => x.trim());
+    if (f.length < 9) return errors.push(`Ligne ${i + 1} : ${f.length} champs au lieu de 9`);
+    const a = f[5].split(',').map(Number);
+    if (a.length !== 14 || a.some((x) => !Number.isFinite(x))) return errors.push(`Ligne ${i + 1} : 14 attributs attendus (${f[0]})`);
+    
+    // --- MODIFICATION ICI : On accepte tous les pays sans bloquer ---
+    const rawCountry = f[3];
+    const code = COUNTRY_CODES[rawCountry] || (rawCountry.length === 2 ? rawCountry.toUpperCase() : rawCountry.substring(0, 2).toUpperCase());
+    // ----------------------------------------------------------------
+
+    const [d, m, y] = f[1].split('.'), parts = f[0].split(' '), pm = f[6].match(/([\d.,]+)\s*\/\s*([\d.,]+)/), num = (s) => parseFloat(String(s).replace(',', '.'));
+    rows.push({ first: parts[0], last: parts.slice(1).join(' '), birth: `${y}-${m}-${d}`, age: +f[2], code, team: f[4], a,
+      pot: pm ? Math.round((num(pm[1]) / num(pm[2])) * 50) / 10 : null, salary: Number(f[7].replace(/\s/g, '')) || 0, clause: Number(f[8].replace(/\s/g, '')) || 0 });
+  });
+  return { rows, errors };
 }
 
 async function importRiders(rows, wipe) {

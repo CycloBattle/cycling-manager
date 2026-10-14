@@ -86,7 +86,7 @@ async function renderRider(c) {
     { label: 'Rapport', off: true, sub: true },
     { label: 'Divers', off: true, sub: true },
   ];
-  const actionsMenu = !ACTIONS.length ? '' : `<div class="actmenu"><button type="button" class="actbtn" id="actbtn"><svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="7" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z"/></svg>Actions <span class="chev">&#9662;</span></button>
+  const actionsMenu = !ACTIONS.length ? '' : `<div class="actmenu"><button type="button" class="actbtn" id="actbtn"><svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="7" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z"/></svg>Actions <span class="chev" style="font-size:0.65rem">&#9662;</span></button>
     <div class="actlist" id="actlist" hidden>${ACTIONS.map((a) => (a.sep ? '<hr>' : `<button type="button" class="actitem" data-act="${a.act || ''}" ${a.off ? 'disabled' : ''}>${a.label}${a.sub ? '<span class="chev">&#8250;</span>' : ''}</button>`)).join('')}</div></div>`;
   const attrCell = (code) => {
     if (own || kn >= 100) return `<span class="tr ${trendOf(code, r)}">${{ up: '▲', down: '▼', flat: '►' }[trendOf(code, r)]}</span><span class="an ${tone(A[code])}">${A[code]}</span>`;

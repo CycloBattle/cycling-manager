@@ -11,7 +11,9 @@ const state = { user: null, manager: null, team: null, isAdmin: false, tab: 'das
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const $ = (id) => document.getElementById(id);
 const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
-const natOptions = (sel = 'FR') => Object.entries(NATS).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v}</option>`).join('');
+// Noms des pays : la table « countries » est la référence unique (codes ISO + noms français), chargée à la connexion
+async function loadCountries() { const { data } = await sb.from('countries').select('code, name_fr'); (data || []).forEach((c) => (NATS[c.code] = c.name_fr)); }
+const natOptions = (sel = 'FR') => Object.entries(NATS).sort((a, b) => a[1].localeCompare(b[1], 'fr')).map(([k, v]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${v}</option>`).join('');
 const fmtEUR = (n) => Number(n).toLocaleString('fr-FR') + ' €';
 
 function logoSrc(team) {            // logo par défaut : pastille avec l'initiale
@@ -38,6 +40,7 @@ async function withBusy(btn, errEl, fn) {
 // ---------- Routage selon l'état du joueur ----------
 async function route() {
   if (!state.user) return viewAuth();
+  if (!window.natsLoaded) { await loadCountries(); window.natsLoaded = true; }
   const { data: m } = await sb.from('managers').select('*').eq('user_id', state.user.id).maybeSingle();
   state.manager = m;
   if (!m) return viewManager();
@@ -198,7 +201,6 @@ const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
   portal: { label: 'PORTAIL', subs: [['portal', 'Portail'], ['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
-  tactics: { label: 'TACTIQUES DE COURSE', subs: [['races', 'Engagements de course'], ['calendar', 'Calendrier']] },
   recruit: { label: 'RECRUTEMENT', subs: [['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['recruiters', 'Staff de recrutement'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },
   training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
@@ -275,6 +277,8 @@ async function renderTab() {
   if (tab === 'rider') return renderRider(c);
   if (tab === 'admin') return renderAdmin(c);
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
+  if (tab === 'recruiters') return renderRecruiters(c);
+  if (tab === 'missions') return renderMissions(c);
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
   if (tab === 'contracts') return renderSponsors(c);
   if (tab === 'ranking') {
@@ -320,7 +324,7 @@ function messagesHTML(msgs) {
 async function renderPortal(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, g = state.game;
-  const [riders, races, teams, sums, mine, free, staff, entries] = await Promise.all([
+  const [riders, races, teams, sums, mine, free, staff, entries, scoutsRes] = await Promise.all([
     sb.from('riders').select('*').in('team_id', myTeamIds()),
     sb.from('races').select('*').order('date'),
     sb.from('teams').select('id, name, official_name, division, uci_points').order('uci_points', { ascending: false }),
@@ -329,10 +333,11 @@ async function renderPortal(c) {
     sb.from('riders').select('id', { count: 'exact', head: true }).is('team_id', null),
     sb.from('staff').select('monthly_salary').eq('team_id', t.id),
     sb.from('race_entries').select('race_id, status').eq('team_id', t.id),
+    sb.from('scouts').select('monthly_salary').eq('team_id', t.id),
   ]);
   const ctx = { riders: riders.data || [], races: races.data || [], mine: mine.data || [], sums: sums.data || [], entryByRace: Object.fromEntries((entries.data || []).map((e) => [e.race_id, e.status])) };
   const sum = (a, k) => a.reduce((s, x) => s + Number(x[k] || 0), 0);
-  const payroll = sum(ctx.riders, 'contract_salary') + sum(staff.data || [], 'monthly_salary'), income = sum(ctx.mine, 'monthly_payout'), net = income - payroll;
+  const payroll = sum(ctx.riders, 'contract_salary') + sum(staff.data || [], 'monthly_salary') + sum(scoutsRes.data || [], 'monthly_salary'), income = sum(ctx.mine, 'monthly_payout'), net = income - payroll;
   const health = net >= 0 ? 100 : Math.max(0, Math.min(100, Math.round((Number(t.budget) / -net / 6) * 100)));
   const upcoming = ctx.races.filter((r) => r.status === 'SCHEDULED'), nr = upcoming[0];
   const msgs = buildMessages(ctx);

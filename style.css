@@ -145,3 +145,21 @@ textarea { width:100%; background:#1f2937; color:var(--txt); border:1px solid #3
 .fbar { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.6rem; } .fbar input, .fbar select { width:auto; padding:.35rem .5rem; font-size:.85rem; }
 .starbtn { background:none; color:#facc15; padding:0 .3rem; font-size:1.05rem; }
 table.sq button[data-obs] { padding:.2rem .6rem; font-size:.75rem; }
+.stars.range { background:linear-gradient(90deg,#facc15 calc(var(--lo) / 5 * 100%),#a16207 0,#a16207 calc(var(--hi) / 5 * 100%),#4b5563 0); -webkit-background-clip:text; background-clip:text; color:transparent; }
+
+/* Menu « Actions » de la fiche coureur */
+.actmenu { position:relative; display:inline-block; margin-top:.6rem; }
+.actbtn { display:flex; align-items:center; gap:.5rem; background:#7c3aed; border:1px solid #a78bfa; border-radius:6px; padding:.4rem .9rem; font-weight:600; }
+.actbtn:hover { background:#8b5cf6; }
+.actlist { position:absolute; top:112%; left:0; z-index:40; min-width:270px; background:#0b1020; border:1px solid #4b5563; border-radius:8px; padding:.3rem; box-shadow:0 10px 30px rgba(0,0,0,.55); }
+.actlist[hidden] { display:none; }
+.actitem { display:flex; width:100%; justify-content:space-between; align-items:center; background:none; color:#e5e7eb; text-align:left; font-weight:500; padding:.5rem .7rem; border-radius:5px; }
+.actitem:hover:not(:disabled) { background:#312e81; } .actitem:disabled { color:#6b7280; cursor:not-allowed; }
+.actlist hr { border:0; border-top:1px solid #374151; margin:.3rem 0; } .actmenu .chev { color:#9ca3af; }
+
+/* Édition admin des coureurs */
+.adm-ov { position:fixed; inset:0; background:rgba(3,7,18,.78); z-index:60; overflow:auto; display:flex; justify-content:center; align-items:flex-start; padding:3vh 1rem; }
+.adm-box { background:#111827; border:1px solid #374151; border-radius:10px; width:100%; max-width:980px; padding:1.25rem; }
+.adm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.6rem; } .adm-grid label { font-size:.75rem; color:var(--muted); display:block; margin-bottom:.15rem; }
+.adm-sec { margin:.9rem 0 .35rem; color:#f9a8d4; font-size:.8rem; text-transform:uppercase; }
+.neg-head { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:.8rem; } .neg-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; } .neg-hint { font-size:.78rem; min-height:1.1em; }

@@ -19,6 +19,7 @@ function attrsOf(r) {
     STA: v('stamina'), RES: avg(v('stamina'), v('recovery')) + off('RES'), REC: v('recovery') };
   return Object.fromEntries(Object.entries(raw).map(([k, x]) => [k, Math.max(50, Math.min(85, Math.round(50 + ((x - 40) * 35) / 34)))]));
 }
+
 // Tendance selon l'âge, la fatigue et les blessures
 function trendOf(code, r) {
   const h = hashN(r.id + code) % 3;
@@ -43,7 +44,7 @@ async function renderRider(c) {
     c.querySelector('[data-back]').onclick = () => step(-1); return;
   }
   r0.teams = r0.team_id ? (await sb.from('teams').select('*').eq('id', r0.team_id).maybeSingle()).data : null;
-  const [mates, res, sc, obs, ai, tms, myObs] = await Promise.all([
+  const [mates, res, sc, obs, ai, tms, myObs, wl, ofr] = await Promise.all([
     r0.team_id ? sb.from('riders').select('*').eq('team_id', r0.team_id) : Promise.resolve({ data: [r0] }),
     sb.from('race_results').select('position, uci_points, races(date)').eq('rider_id', r0.id),
     mineIds.includes(r0.team_id) ? Promise.resolve({ data: null }) : sb.from('scouting_reports').select('knowledge').eq('team_id', mine).eq('rider_id', r0.id).maybeSingle(),
@@ -51,9 +52,12 @@ async function renderRider(c) {
     sb.from('ai_clubs').select('id, name'),
     sb.from('teams').select('id, name, official_name'),
     sb.from('rider_observations').select('rider_id').eq('observer_team_id', mine),
+    sb.from('watchlist').select('rider_id').eq('team_id', mine).eq('rider_id', r0.id).maybeSingle(),
+    sb.from('transfer_offers').select('id').eq('from_team_id', mine).eq('rider_id', r0.id).in('status', ['PENDING_CLUB', 'CLUB_ACCEPTED', 'NEGOTIATING_CONTRACT', 'CONTRACT_ACCEPTED']).limit(1),
   ]);
   const r = enrich(mates.data || [r0], g.game_date).find((x) => x.id === r0.id);
-  // Brouillard de guerre : notes à 50 % de connaissance, potentiel et détails à 75 %
+  
+  // Brouillard de guerre
   const own = mineIds.includes(r0.team_id), kn = own ? 100 : (sc.data?.knowledge ?? 0), known = kn >= 50, deep = kn >= 75;
   const names = { ...Object.fromEntries((ai.data || []).map((x) => [x.id, x.name])), ...Object.fromEntries((tms.data || []).map((x) => [x.id, x.official_name || x.name])) };
   const watchers = (obs.data || []).filter((o) => o.observer_team_id !== mine).map((o) => names[o.observer_ai_id || o.observer_team_id] || 'Club');
@@ -70,7 +74,26 @@ async function renderRider(c) {
   const pos = [r.fatigue <= 25 && 'Très bonne fraîcheur', r.role === 'Leader' && 'Rôle de leader reconnu', r.u23 && r.pot - r.level >= 8 && 'Belles perspectives de progression', r.contract_end_year >= g.season_year + 2 && 'Contrat sécurisé'].filter(Boolean);
   const neg = [r.fatigue > 60 && 'Fatigue accumulée', r.injured && 'Blessure en cours', r.role === 'Équipier' && r.level >= 66 && 'Souhaite un rôle plus important'].filter(Boolean);
   const q = '<span class="muted">?</span>', hid = '<div class="muted">Informations masquées : observez ce coureur (notes à 50 %, potentiel à 75 %).</div>';
-  const obsBox = own ? '' : `<div class="rbox"><div class="muted">Connaissance : ${kn}%</div><div class="meter"><i style="width:${kn}%"></i></div><div class="muted">${watching ? 'Observation en cours' : kn >= 100 ? 'Observation terminée' : 'Aucune observation en cours'} · ${used} active(s)</div>${kn >= 100 ? '' : `<button id="obs">${watching ? "Arrêter l'observation" : 'Observer ce coureur'}</button>`}</div>`;
+  
+  // Bloc de connaissance (nettoyé du gros bouton)
+  const obsBox = own ? '' : `<div class="rbox"><div class="muted">Connaissance : ${kn}%</div><div class="meter"><i style="width:${kn}%"></i></div><div class="muted">${watching ? 'Observation en cours' : kn >= 100 ? 'Observation terminée' : 'Aucune observation en cours'} · ${used} active(s)</div></div>`;
+  
+  // Configuration du Menu "Actions" compact
+  const watched = !!wl.data, offerOpen = (ofr.data || []).length > 0;
+  const ACTIONS = own ? [] : [
+    { label: watching ? 'Observation en cours' : kn >= 100 ? 'Observation terminée' : 'Observer ce coureur', act: 'observe', off: watching || kn >= 100 },
+    ...(watching ? [{ label: "Arrêter l'observation", act: 'stopobs' }] : []),
+    { label: offerOpen ? 'Offre en cours (voir)' : 'Faire une offre', act: 'offer' },
+    { label: watched ? 'Retirer de la liste de sélection' : 'Ajouter à la liste de sélection', act: 'watch' },
+    { sep: true },
+    { label: 'Transfert', off: true, sub: true },
+    { label: 'Rapport', off: true, sub: true },
+    { label: 'Divers', off: true, sub: true },
+  ];
+
+  const actionsMenu = !ACTIONS.length ? '' : `<div class="actmenu"><button type="button" class="actbtn" id="actbtn"><svg width="11" height="11" viewBox="0 0 24 24" fill="#fff"><circle cx="12" cy="7" r="4"/><path d="M4 21c0-4.4 3.6-8 8-8s8 3.6 8 8z"/></svg>Actions <span class="chev" style="font-size:0.65rem">&#9662;</span></button>
+    <div class="actlist" id="actlist" hidden>${ACTIONS.map((a) => (a.sep ? '<hr>' : `<button type="button" class="actitem" data-act="${a.act \vert{}\vert{} ''}" ${a.off ? 'disabled' : ''}>${a.label}${a.sub ? '<span class="chev">&#8250;</span>' : ''}</button>`)).join('')}</div></div>`;
+
   const row = ([code, label]) => `<div class="arow"><span><b>${code}</b> <span class="muted">${label}</span></span>
     <span>${known ? `<span class="tr ${trendOf(code, r)}">${{ up: '▲', down: '▼', flat: '►' }[trendOf(code, r)]}</span><span class="an ${tone(A[code])}">${A[code]}</span>` : '<span class="an g0">?</span>'}</span></div>`;
   const card = (title, body) => `<div class="scard"><h5>${title}</h5>${body}</div>`;
@@ -81,7 +104,9 @@ async function renderRider(c) {
       <div class="rav">${esc(r.first_name[0] + r.last_name[0])}</div>
       <div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)} <span class="bd blue">${num}</span> ${watchers.length ? `<span class="bd green obs">Observé<span class="obs-pop"><b>Observé par :</b>${watchers.map((n) => `<div>(Transfert - ${esc(n)})</div>`).join('')}</span></span>` : ''}</div>
         <div class="muted">${r.age} ans · ${flag(r.nationality)}</div>
-        <div class="rbad"><span class="bd violet">${SPEC_NAMES[r.spec]}</span> <span class="bd spec">${esc(r.role)}</span>${r.u23 ? ' <span class="bd amber">Espoir U23</span>' : ''}${known && A.MTN >= 78 ? ' <span class="bd gold">Montagne max</span>' : ''}</div></div>
+        <div class="rbad"><span class="bd violet">${SPEC_NAMES[r.spec]}</span> <span class="bd spec">${esc(r.role)}</span>${r.u23 ? ' <span class="bd amber">Espoir U23</span>' : ''}${known && A.MTN >= 78 ? ' <span class="bd gold">Montagne max</span>' : ''}</div>
+        ${actionsMenu}
+      </div>
       <div class="rteam"><img src="${esc(logoSrc(team || { name: '?' }))}" alt=""><div><b>${esc(team ? team.official_name || team.name : 'Sans équipe')}</b><div class="muted">${esc(r.role)}</div></div></div>
       <div class="rbox"><div class="muted">Valeur · clause libératoire</div><b>${fmtEUR(r.value)} · ${fmtEUR(r.clause ?? Math.round((r.value * 1.5) / 1000) * 1000)}</b>
         <div class="muted">${known ? fmtEUR(r.contract_salary || 0) + ' / mois' : '?'} · fin ${r.contract_end_year ? '31/12/' + r.contract_end_year : '-'}</div></div>
@@ -103,13 +128,32 @@ async function renderRider(c) {
       ${card('Entraînement', known ? `<div><b>${FOCUS[r.spec]}</b></div><div class="muted">Note du staff</div><span class="bd green">${note} / 10</span>` : hid)}
       ${card('Stats de la saison', `<table class="fm"><tr><th>Jours de course</th><th>Victoires</th><th>Podiums</th><th>Pts UCI</th></tr><tr><td>${st.days}</td><td>${st.wins}</td><td>${st.pods}</td><td>${st.pts}</td></tr></table>`)}
     </div>`;
-  const ob = $('obs');
-  if (ob) ob.onclick = async () => {
-    ob.disabled = true;
-    const { error } = await sb.rpc(watching ? 'stop_observation' : 'start_observation', { p_rider: r0.id });
-    if (error) { toast(error.message); ob.disabled = false; return; }
-    toast(watching ? 'Observation arrêtée.' : "Observation lancée : la connaissance progresse à chaque jour de jeu.");
-    renderRider(c);
-  };
+
+  // Gestion des clics sur le menu déroulant Actions
+  const actBtn = $('actbtn'), actList =$('actlist');
+  if (actBtn) {
+    actBtn.onclick = (e) => { e.stopPropagation(); actList.hidden = !actList.hidden; };
+    actList.onclick = async (e) => {
+      const b = e.target.closest('[data-act]');
+      if (!b || b.disabled) return;
+      actList.hidden = true;
+      const rpc = async (fn, ok) => { const { error } = await sb.rpc(fn, { p_rider: r0.id }); if (error) return toast(error.message); toast(ok); renderRider(c); };
+      if (b.dataset.act === 'observe') rpc('start_observation', 'Observation lancée : la connaissance progresse à chaque jour de jeu.');
+      else if (b.dataset.act === 'stopobs') rpc('stop_observation', 'Observation arrêtée.');
+      else if (b.dataset.act === 'offer') { if (typeof openNegotiationModal === 'function') openNegotiationModal(r0.id); else toast("Le module d'offre n'est pas encore chargé."); }
+      else if (b.dataset.act === 'watch') {
+        const { error } = await (watched ? sb.from('watchlist').delete().eq('team_id', mine).eq('rider_id', r0.id) : sb.from('watchlist').insert({ team_id: mine, rider_id: r0.id }));
+        if (error) return toast(error.message);
+        toast(watched ? 'Retiré de la liste de sélection.' : 'Ajouté à la liste de sélection.'); renderRider(c);
+      }
+    };
+  }
+
+  if (!window.actBound) {   // Ferme le menu au clic ailleurs
+    window.actBound = true;
+    document.addEventListener('click', (e) => { if (!e.target.closest('.actmenu')) document.querySelectorAll('.actlist').forEach((l) => (l.hidden = true)); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.actlist').forEach((l) => (l.hidden = true)); });
+  }
+
   c.querySelector('[data-back]').onclick = () => step(-1);
 }

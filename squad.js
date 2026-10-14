@@ -15,7 +15,7 @@ function enrich(riders, today) {
     const best = Object.keys(map).reduce((a, k) => ((r[k] || 0) > (r[a] || 0) ? k : a), 'mountain');
     const pot = r.potential != null ? Math.round(35 + Number(r.potential) * 12) : Math.min(95, Math.round(level + Math.max(0, 28 - r.age) * 1.6));
     const value = Math.round(((level - 30) ** 2 * 900 * (1 + Math.max(0, 30 - r.age) * 0.06) * (1 + (pot - level) / 60)) / 1000) * 1000;
-    return { ...r, level, pot, value, clause: r.release_clause != null ? Number(r.release_clause) : null, spec: level < 66 ? 'EQP' : top[0] - top[2] <= 3 ? 'PST' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
+    return { ...r, level, pot, value: r.market_value != null ? Number(r.market_value) : value, clause: r.release_clause != null ? Number(r.release_clause) : null, spec: level < 66 ? 'EQP' : top[0] - top[2] <= 3 ? 'PST' : map[best], form: 100 - (r.fatigue || 0), u23: r.age <= 22, injured: !!(r.injured_until && r.injured_until > today) };
   });
   const byLevel = out.slice().sort((a, b) => b.level - a.level);
   byLevel.forEach((r, i) => { r.role = i < 2 ? 'Leader' : null; });

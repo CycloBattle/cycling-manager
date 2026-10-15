@@ -163,3 +163,37 @@ table.sq button[data-obs] { padding:.2rem .6rem; font-size:.75rem; }
 .adm-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.6rem; } .adm-grid label { font-size:.75rem; color:var(--muted); display:block; margin-bottom:.15rem; }
 .adm-sec { margin:.9rem 0 .35rem; color:#f9a8d4; font-size:.8rem; text-transform:uppercase; }
 .neg-head { display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; margin-bottom:.8rem; } .neg-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; } .neg-hint { font-size:.78rem; min-height:1.1em; }
+
+/* ===== Modal de négociation à 3 colonnes ===== */
+.tm-ov { position:fixed; inset:0; background:rgba(3,7,18,.82); z-index:70; overflow:auto; display:flex; justify-content:center; align-items:flex-start; padding:2.5vh 1rem; }
+.tm-box { background:#0b1020; border:1px solid #374151; border-radius:12px; width:100%; max-width:1280px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+.tm-top { display:flex; justify-content:space-between; align-items:center; padding:.8rem 1.1rem; border-bottom:1px solid #374151; background:linear-gradient(90deg,#1f2937,#0b1020); border-radius:12px 12px 0 0; }
+.tm-top-r { color:#f9a8d4; font-weight:700; display:flex; gap:1rem; align-items:center; }
+.tm-grid { display:grid; grid-template-columns:270px minmax(0,1fr) 320px; gap:.9rem; padding:.9rem; }
+.tm-col { display:grid; gap:.8rem; align-content:start; }
+.tm-card { background:#1f2937; border:1px solid #374151; border-radius:8px; padding:.85rem; }
+.tm-card h5 { margin:0 0 .6rem; color:#f9a8d4; text-transform:uppercase; font-size:.78rem; letter-spacing:.04em; }
+.tm-who { display:flex; gap:.75rem; align-items:center; }
+.tm-av { width:56px; height:56px; border-radius:50%; background:#4c1d95; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:1.2rem; color:#fff; flex:none; }
+.tm-status { margin-top:.2rem; font-size:.8rem; font-weight:700; color:#c4b5fd; }
+.tm-bubbles { display:grid; gap:.5rem; }
+.tm-bubble { background:#0b1020; border:1px solid #374151; border-radius:10px 10px 10px 2px; padding:.6rem .75rem; font-size:.85rem; line-height:1.45; }
+.tm-b2 { border-color:#7c3aed; }
+.tm-kv { display:flex; justify-content:space-between; gap:.6rem; padding:.3rem 0; font-size:.84rem; border-bottom:1px solid #2b3445; } .tm-kv span { color:#9ca3af; }
+.tm-total { font-weight:700; } .tm-total span { color:#e5e7eb; }
+.tm-tabs { display:flex; gap:.4rem; flex-wrap:wrap; }
+.tm-tabs button { background:#1f2937; color:#d1d5db; border:1px solid #374151; font-weight:600; padding:.5rem .9rem; border-radius:6px; }
+.tm-tabs button.on { background:#7c3aed; border-color:#a78bfa; color:#fff; } .tm-tabs button:disabled { opacity:.45; cursor:not-allowed; }
+.tm-row { margin-bottom:.7rem; } .tm-row label { display:block; font-size:.78rem; color:#9ca3af; margin-bottom:.25rem; }
+.tm-field { display:flex; gap:.5rem; align-items:center; } .tm-field input, .tm-field select { flex:1; }
+.tm-hint { font-size:.76rem; color:#9ca3af; margin-top:.25rem; }
+.tm-lock { display:flex; align-items:center; gap:.35rem; white-space:nowrap; background:#0b1020; border:1px solid #374151; color:#d1d5db; font-size:.75rem; font-weight:600; padding:.4rem .6rem; border-radius:6px; }
+.tm-lock.on { background:#db2777; border-color:#f472b6; color:#fff; }
+.tm-meter { height:10px; background:#0b1020; border:1px solid #374151; border-radius:99px; overflow:hidden; } .tm-meter i { display:block; height:100%; width:0; background:linear-gradient(90deg,#7c3aed,#db2777); transition:width .2s; }
+.tm-btns { display:grid; gap:.5rem; }
+.tm-btns button { padding:.7rem 1rem; border-radius:7px; font-weight:700; background:#db2777; color:#fff; }
+.tm-btns .tm-ghost { background:transparent; border:1px solid #7c3aed; color:#c4b5fd; } .tm-btns .tm-quit { background:#0b1020; border:1px solid #374151; color:#9ca3af; font-weight:500; }
+.tm-btns button:disabled { opacity:.5; }
+.tm-err { color:#f87171; font-size:.82rem; min-height:1.2em; }
+.tm-simple { padding:1.5rem; max-width:560px; } .tm-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
+@media (max-width:1050px) { .tm-grid { grid-template-columns:1fr; } }

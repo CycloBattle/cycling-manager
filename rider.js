@@ -65,6 +65,8 @@ async function renderRider(c) {
   (res.data || []).filter((x) => String(x.races?.date || '').slice(0, 4) === String(g.season_year)).forEach((x) => { st.days++; if (x.position === 1) st.wins++; if (x.position <= 3) st.pods++; st.pts += x.uci_points || 0; });
   r.moral = moralOf(r);
 
+  // Rachat de contrat : une seule valeur (clause saisie si elle existe, sinon valeur estimée). Libre, ou contrat finissant cette saison : 0 €
+  const buyout = r.clause ?? r.value, freeAgent = !r0.team_id || (r.contract_end_year != null && r.contract_end_year <= g.season_year);
   const A = attrsOf(r), exp = Math.max(1, Math.min(20, Math.round((r.age - 18) * 0.9 + (hashN(r.id) % 3)))), rep = r.level < 55 ? 1 : r.level < 62 ? 2 : r.level < 68 ? 3 : r.level < 72 ? 4 : 5;
   const t1 = hashN(r.id) % 7, t2 = (hashN(r.id + 'b') >>> 3) % 7, traits = [TRAITS[t1], t2 !== t1 ? TRAITS[t2] : null].filter(Boolean);
   const [mood, moodCls] = moralLabel(r.moral), team = r0.teams, num = (hashN(r.id) % 98) + 1;
@@ -104,7 +106,7 @@ async function renderRider(c) {
         <div class="muted">${r.age} ans · ${flag(r.nationality)}</div>
         <div class="rbad"><span class="bd violet">${SPEC_NAMES[r.spec]}</span> <span class="bd spec">${esc(r.role)}</span>${r.u23 ? ' <span class="bd amber">Espoir U23</span>' : ''}${known && A.MTN >= 78 ? ' <span class="bd gold">Montagne max</span>' : ''}</div>${actionsMenu}</div>
       <div class="rteam"><img src="${esc(logoSrc(team || { name: '?' }))}" alt=""><div><b>${esc(team ? team.official_name || team.name : 'Sans équipe')}</b><div class="muted">${esc(r.role)}</div></div></div>
-      <div class="rbox"><div class="muted">Valeur · clause libératoire</div><b>${moneyFog(r.value, r.id, 'value', kn, own)} · ${moneyFog(r.clause ?? Math.round((r.value * 1.5) / 1000) * 1000, r.id, 'clause', kn, own)}</b>
+      <div class="rbox"><div class="muted">Valeur estimée / Rachat :</div><b>${freeAgent ? 'Libre de tout contrat (0 €)' : moneyFog(buyout, r.id, 'clause', kn, own)}</b>
         <div class="muted">${known ? moneyFog(r.contract_salary || 0, r.id, 'salary', kn, own) + ' / mois' : '?'} · fin ${r.contract_end_year ? '31/12/' + r.contract_end_year : '-'}</div></div>
       <div class="rbox"><div class="muted">Niveau actuel</div>${levelStars(r, kn, own, fq)}<div class="muted">Potentiel</div>${potStars(r, kn, own, fq)}</div>
       ${obsBox}

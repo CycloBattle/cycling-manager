@@ -108,7 +108,7 @@ async function renderRider(c) {
       <div class="rteam"><img src="${esc(logoSrc(team || { name: '?' }))}" alt=""><div><b>${esc(team ? team.official_name || team.name : 'Sans équipe')}</b><div class="muted">${esc(r.role)}</div></div></div>
       <div class="rbox"><div class="muted">Valeur estimée / Rachat :</div><b>${freeAgent ? 'Libre de tout contrat (0 €)' : moneyFog(buyout, r.id, 'clause', kn, own)}</b>
         <div class="muted">${known ? moneyFog(r.contract_salary || 0, r.id, 'salary', kn, own) + ' / mois' : '?'} · fin ${r.contract_end_year ? '31/12/' + r.contract_end_year : '-'}</div></div>
-      <div class="rbox"><div class="muted">Niveau actuel</div>${levelStars(r, kn, own, fq)}<div class="muted">Potentiel</div>${potStars(r, kn, own, fq)}</div>
+      <div class="rbox"><div class="muted">Niveau actuel</div><span class="stars" style="color:#f59e0b;">${'★'.repeat(Math.round(((r.level || 50) / 100) * 6))}</span><div class="muted">Potentiel</div><span class="stars" style="color:#f59e0b;">${'★'.repeat(Math.round(((r.pot || r.level || 50) / 100) * 6))}</span></div>
       ${obsBox}
     </div>
     <div class="rcols">

@@ -29,7 +29,7 @@ function moneyFog(v, id, key, kn, own) {
   if (kn < 50) return '<span class="muted">?</span>';
   const [lo, hi] = moneyBounds(v, id, key, kn); return `${shortEUR(lo)} à ${shortEUR(hi)}`;
 }
-const starsRange = (lo, hi) => `<span class="stars range" style="--lo:${lo};--hi:${hi}" title="${String(lo).replace('.', ',')} à ${String(hi).replace('.', ',')} étoiles">★★★★★</span>`;
+const starsRange = (lo, hi) => `<span class="stars range" style="--lo:${lo};--hi:${hi}" title="${String(lo).replace('.', ',')} à ${String(hi).replace('.', ',')} / 6">★★★★★★</span>`;
 const scoutFactors = (rows) => { const m = (k) => (rows.length ? Math.max(...rows.map((s) => s[k])) : 6); return { ca: 1.5 - m('judging_current_ability') / 20, pa: 1.5 - m('judging_potential_ability') / 20 }; };
 function levelStars(r, kn, own, fq) {
   if (own || kn >= 100) return stars(r.level);

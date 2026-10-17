@@ -1,6 +1,7 @@
 // transfers_logic.js : négociation agent + club
 const TL_MULT = { 'Élevage U23': 0.85, 'Équipier': 1, 'Poisson-pilote': 1.08, 'Équipier de luxe': 1.18, Leader: 1.4 };
 const TL_RANK = { 'Élevage U23': 0, 'Équipier': 1, 'Poisson-pilote': 2, 'Équipier de luxe': 3, Leader: 4 };
+const TL_DIV = { WORLD_TOUR: 3, PRO_TEAM: 2, CONTI_PRO: 1 };   // réputation : WorldTour > ProTeam > Continental
 const tlK = (n) => Math.round(n / 1000) * 1000, tlC = (n) => Math.ceil(n / 100) * 100;
 
 function evaluateOffer(rider, offer) {
@@ -14,19 +15,25 @@ function evaluateOffer(rider, offer) {
   const ask = free ? 0 : tlK(Math.min(rider.clause ?? Infinity, rider.value * (0.5 + 0.3 * Math.max(0, rider.contract_end_year - o.season))));
   const sal = Math.min(1, o.salary / minSalary) ** 1.5, role = 1 - 0.25 * Math.max(0, TL_RANK[natural] - TL_RANK[o.role]);
   const club = !ask ? 1 : rider.clause != null && o.amount >= rider.clause ? 1 : Math.min(1, o.amount / ask);
-  const score = Math.round(Math.min(sal * (0.7 + 0.3 * role), club) * 100);
-  const cRole = TL_RANK[o.role] < TL_RANK[natural] ? natural : o.role, cSalary = o.lockSalary ? o.salary : Math.max(o.salary, minFor(cRole));
-  const counterOffer = score >= 50 && score < 85 && cSalary >= minFor(cRole) ? { salary: cSalary, amount: o.lockAmount ? o.amount : Math.max(o.amount, ask), role: cRole } : null;
+  const cRole = TL_RANK[o.role] < TL_RANK[natural] ? natural : o.role;
+  const util = (salary, rl, div) => Math.min(1.3, salary / minFor(rl)) + 0.15 * (TL_DIV[div] || 1) + 0.08 * TL_RANK[rl], mine = util(o.salary, o.role, o.division);
+  const rival = (o.rivals || []).map((x) => ({ ...x, u: util(x.salary, x.role, x.division) })).sort((a, b) => b.u - a.u)[0], beaten = !!rival && rival.u > mine + 0.05;
+  const need = beaten ? tlC(minFor(cRole) * (rival.u + 0.06 - 0.15 * (TL_DIV[o.division] || 1) - 0.08 * TL_RANK[cRole])) : 0, outbid = beaten && need <= minFor(cRole) * 1.3;
+  const score = Math.round(Math.min(sal * (0.7 + 0.3 * role), club, !beaten ? 1 : outbid ? 0.84 : 0.49) * 100);
+  const cSalary = o.lockSalary ? o.salary : Math.max(o.salary, minFor(cRole), need);
+  const counterOffer = score >= 50 && score < 85 && cSalary >= Math.max(minFor(cRole), need) ? { salary: cSalary, amount: o.lockAmount ? o.amount : Math.max(o.amount, ask), role: cRole } : null;
   const c = counterOffer, feedback = score >= 85 ? "Nous sommes d'accord : j'accepte de transmettre l'offre au club."
     : c ? `Nous y sommes presque. Pour conclure : ${fmtEUR(c.salary)} / mois${ask ? `, ${fmtEUR(c.amount)} d'indemnité` : ''}, rôle de ${c.role}.`
     : score >= 30 ? "Cette offre est trop basse, nous ne pouvons pas l'accepter." : "C'est insultant ! Mon client ne souhaite plus discuter.";
-  return { score, feedback, counterOffer };
+  const rv = beaten ? (outbid ? ` Un autre club propose mieux : ${rival.name || 'un concurrent'} (${fmtEUR(rival.salary)} / mois, rôle ${rival.role}).` : ` Il préfère rejoindre ${rival.name || 'un club'}, de meilleure réputation.`) : '';
+  return { score, feedback: feedback + rv, counterOffer, rival: beaten ? rival : null };
 }
 
 async function submitOfferToAgent(riderId, offerState) {
   const { data: raw } = await sb.from('riders').select('*').eq('id', riderId).single();
-  const o = { season: state.game.season_year, ...offerState }, res = evaluateOffer(enrich([raw], state.game.game_date)[0], o);
-  const b = $('tm-bubbles');
+  const { data: rv } = await sb.rpc('rival_offers', { p_rider: riderId });
+  const rivals = (rv || []).map((x) => ({ name: x.team_name, division: x.division, salary: Number(x.salary) || 0, role: TL_RANK[x.role] === undefined ? 'Équipier' : x.role }));
+  const o = { season: state.game.season_year, division: state.team.division, rivals, ...offerState }, res = evaluateOffer(enrich([raw], state.game.game_date)[0], o);  const b = $('tm-bubbles');
   if (b) { b.insertAdjacentHTML('beforeend', `<div class="tm-bubble tm-b2${res.score < 50 ? ' tm-angry' : ''}"><small>Agent</small>${esc(res.feedback)}</div>`); b.scrollTop = b.scrollHeight; }
   if (res.counterOffer) Object.entries({ 'tm-salary': res.counterOffer.salary, 'tm-amount': res.counterOffer.amount, 'tm-role': res.counterOffer.role })
     .forEach(([id, v]) => { if ($(id) && !$(id).disabled)$(id).value = v; });

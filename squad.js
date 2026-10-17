@@ -2,8 +2,8 @@
 const SPEC_NAMES = { MTN: 'Grimpeur', VAL: 'Puncheur', CLM: 'Rouleur / CLM', SPR: 'Sprinteur', FLA: 'Flandrien', PST: 'Polyvalent', EQP: 'Équipier' };
 const sq = { view: 'general', squad: 'all', spec: 'all', sort: { k: 'level', d: -1 }, sel: new Set(), lastTab: null, all: [] };
 const STAT_KEYS = [['flat', 'Plat'], ['mountain', 'Mont.'], ['hills', 'Côtes'], ['time_trial', 'CLM'], ['sprint', 'Sprint'], ['cobbles', 'Pavés'], ['stamina', 'Endur.'], ['recovery', 'Récup.']];
-const starV = (v) => Math.max(0.5, Math.min(5, Math.round(((v - 35) / 12) * 2) / 2));
-const stars = (v) => `<span class="stars" style="--v:${starV(v)}" title="${v}">★★★★★</span>`;
+const starV = (v) => Math.max(0.5, Math.min(6, Math.round(((v - 35) / 10) * 2) / 2));
+const stars = (v) => `<span class="stars" style="--v:${starV(v)}" title="${v}">★★★★★★</span>`;
 const flag = (c) => `<img class="flag" src="https://flagcdn.com/w20/${esc(String(c).toLowerCase())}.png" alt="" onerror="this.style.display='none'"> ${esc(c)}`;
 
 // Niveau, potentiel, spécialité, rôle et valeur sont calculés à partir des notes (aucune colonne dédiée en base)

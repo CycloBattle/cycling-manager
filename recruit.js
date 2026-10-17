@@ -18,9 +18,9 @@ function fogRange(v, id, key, kn, q, min = -Infinity, max = Infinity) {
 const attrRange = (v, id, code, kn, q) => fogRange(v, id, code, kn, q, 50, 85);
 const lvlRange = (r, kn, q) => fogRange(r.level, r.id, 'LVL', kn, q);
 function potRange(r, kn, q) {
-  const p = starV(r.pot), w = ((100 - kn) / 100) * 1.5 * q; if (!w) return [p, p];
+  const p = starV(r.pot), w = ((100 - kn) / 100) * 1.8 * q; if (!w) return [p, p];
   const a = fogFrac(r.id, 'POT') * 2 * w, h = (x) => Math.round(x * 2) / 2;
-  return [Math.max(0, h(p - a)), Math.min(5, h(p + 2 * w - a))];
+  return [Math.max(0, h(p - a)), Math.min(6, h(p + 2 * w - a))];
 }
 function moneyBounds(v, id, key, kn) { const w = ((100 - kn) / 100) * 0.5, a = fogFrac(id, key) * 2 * w; return [v * (1 - a), v * (1 + 2 * w - a)]; }
 const shortEUR = (x) => (x >= 1e6 ? (x / 1e6).toFixed(1).replace('.', ',') + ' M€' : x >= 1000 ? Math.round(x / 1000) + ' k€' : Math.round(x) + ' €');

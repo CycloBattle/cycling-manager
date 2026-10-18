@@ -197,3 +197,20 @@ table.sq button[data-obs] { padding:.2rem .6rem; font-size:.75rem; }
 .tm-err { color:#f87171; font-size:.82rem; min-height:1.2em; }
 .tm-simple { padding:1.5rem; max-width:560px; } .tm-actions { display:flex; justify-content:flex-end; gap:.5rem; margin-top:1rem; }
 @media (max-width:1050px) { .tm-grid { grid-template-columns:1fr; } }
+
+.inbox-container { display:flex; gap:.75rem; height:calc(100vh - 150px); min-height:480px; }
+.inbox-sidebar { flex:0 0 30%; max-width:30%; min-width:0; display:flex; flex-direction:column; background:rgba(17,24,39,.85); border:1px solid var(--line); border-radius:6px; padding:.75rem; }
+.inbox-list { overflow:auto; flex:1; margin-top:.5rem; }
+.inbox-item { display:flex; gap:.6rem; padding:.6rem .5rem; border-bottom:1px solid var(--line); border-left:3px solid transparent; cursor:pointer; }
+.inbox-item:hover { background:#1f293755; } .inbox-item.sel { background:#4c1d9533; border-left-color:var(--acc); }
+.inbox-dot { width:8px; height:8px; border-radius:50%; background:#a78bfa; margin-top:.45rem; flex:none; } .inbox-item.read .inbox-dot { background:transparent; }
+.inbox-item .t { font-weight:600; } .inbox-item.read .t { font-weight:400; color:var(--muted); }
+.inbox-meta { display:flex; justify-content:space-between; gap:.5rem; font-size:.78rem; color:var(--muted); }
+.inbox-content { flex:1; min-width:0; overflow:auto; background:rgba(17,24,39,.85); border:1px solid var(--line); border-radius:6px; }
+.inbox-head { display:flex; gap:.8rem; align-items:center; padding:1rem 1.25rem; border-bottom:1px solid var(--line); } .inbox-head h3 { margin:.1rem 0 0; } .inbox-head > :last-child { margin-left:auto; }
+.inbox-av { width:40px; height:40px; border-radius:50%; background:#4c1d95; display:flex; align-items:center; justify-content:center; font-weight:700; flex:none; }
+.inbox-body { padding:1.25rem; } .inbox-empty { padding:2rem; }
+.inbox-card { background:#1f2937; border:1px solid #374151; border-radius:8px; padding:1rem; max-width:560px; margin-top:1rem; display:grid; gap:.6rem; }
+.inbox-deal { display:flex; justify-content:space-between; align-items:center; gap:1rem; }
+.inbox-amount { background:#0b1020; border:1px solid #374151; border-radius:6px; padding:.3rem .7rem; font-weight:700; white-space:nowrap; }
+@media (max-width:900px) { .inbox-container { flex-direction:column; height:auto; } .inbox-sidebar { flex:none; max-width:none; max-height:40vh; } }

@@ -308,6 +308,9 @@ function buildMessages(ctx) {
   ctx.races.filter((r) => r.status === 'SCHEDULED' && daysUntil(r.date) <= 14 && !ctx.entryByRace[r.id]).slice(0, 3).forEach((r) => out.push({ id: 'entry-' + r.id, from: 'Directeur sportif', cat: 'Compétition', title: `Composer l'équipe : ${r.name}`, body: `Course le ${fmtShort(r.date)}. Sans validation, la sélection sera automatique.`, task: true }));
   ctx.sums.forEach((s, i) => out.push({ id: 'sum-' + i + (s.races?.name || ''), from: 'Presse', cat: 'Résultat', title: `Résumé : ${s.races?.name || 'course'}`, body: s.summary_text, toRead: true }));
   out.push({ id: 'welcome', from: "Conseil d'administration", cat: 'Direction', title: `Bienvenue à la tête de ${t.official_name || t.name}`, body: 'Objectif de la saison : bâtir un budget solide grâce aux sponsors puis progresser au classement UCI.', toRead: true });
+    (ctx.offers || []).forEach((o) => out.push({ id: 'offer-' + o.id, from: 'Directeur sportif', cat: 'Transfert', title: `Accord final : ${o.name}`, task: true,
+    body: `L'agent et le club sont d'accord. Indemnité ${fmtEUR(o.offer_amount)}, salaire ${fmtEUR(o.offered_monthly_salary)} / mois, ${o.contract_years || 1} an(s).`,
+    action: `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` }));
   return out.map((m) => ({ ...m, date: today }));
 }
 
@@ -318,7 +321,7 @@ function messagesHTML(msgs) {
   return `<div class="tabs">${tab('all', 'Tous')}${tab('new', 'Nouv. (' + msgs.filter((m) => !read.has(m.id)).length + ')')}${tab('task', 'Tâches (' + msgs.filter((m) => m.task).length + ')')}${tab('toread', 'À lire')}</div>
     <div class="msgs">${list.map((m) => `<div class="msg ${read.has(m.id) ? 'read' : ''}" data-msg="${esc(m.id)}">
       <div class="from"><span>${esc(m.from)}</span><span class="tag">${esc(m.cat)}</span></div><div class="title">${esc(m.title)}</div>
-      <div class="muted">${m.date}</div><div class="body">${esc(m.body)}</div></div>`).join('') || '<p class="muted">Aucun message.</p>'}</div>`;
+      <div class="muted">${m.date}</div><div class="body">${esc(m.body)}${m.action || ''}</div></div>`).join('') || '<p class="muted">Aucun message.</p>'}</div>`;
 }
 
 async function renderPortal(c) {
@@ -336,6 +339,7 @@ async function renderPortal(c) {
     sb.from('scouts').select('monthly_salary').eq('team_id', t.id),
   ]);
   const ctx = { riders: riders.data || [], races: races.data || [], mine: mine.data || [], sums: sums.data || [], entryByRace: Object.fromEntries((entries.data || []).map((e) => [e.race_id, e.status])) };
+    ctx.offers = typeof loadAcceptedOffers === 'function' ? await loadAcceptedOffers() : [];
   const sum = (a, k) => a.reduce((s, x) => s + Number(x[k] || 0), 0);
   const payroll = sum(ctx.riders, 'contract_salary') + sum(staff.data || [], 'monthly_salary') + sum(scoutsRes.data || [], 'monthly_salary'), income = sum(ctx.mine, 'monthly_payout'), net = income - payroll;
   const health = net >= 0 ? 100 : Math.max(0, Math.min(100, Math.round((Number(t.budget) / -net / 6) * 100)));

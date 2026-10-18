@@ -66,8 +66,9 @@ function viewAuth(mode = 'in') {
       <button id="go">${mode === 'in' ? 'Se connecter' : 'Créer le compte'}</button>
       <button class="link" id="swap">${mode === 'in' ? "Pas de compte ? S'inscrire" : 'Déjà un compte ? Connexion'}</button>
     </div>`;
-  $('swap').onclick = () => viewAuth(mode === 'in' ? 'up' : 'in');$('go').onclick = () => withBusy($('go'),$('err'), async () => {
-    const creds = { email: $('email').value.trim(), password:$('pwd').value };
+  $('swap').onclick = () => viewAuth(mode === 'in' ? 'up' : 'in');
+  $('go').onclick = () => withBusy($('go'), $('err'), async () => {
+    const creds = { email: $('email').value.trim(), password: $('pwd').value };
     const { data, error } = mode === 'in' ? await sb.auth.signInWithPassword(creds) : await sb.auth.signUp(creds);
     if (error) throw error;
     if (!data.session) throw new Error('Compte créé : confirmez votre email puis connectez-vous.');
@@ -112,7 +113,7 @@ function viewManager() {
     }));
   });
 
-  $('go').onclick = () => withBusy($('go'),$('err'), async () => {
+  $('go').onclick = () => withBusy($('go'), $('err'), async () => {
     const first_name = $('fn').value.trim(), last_name = $('ln').value.trim(), age = +$('age').value;
     if (!first_name || !last_name) throw new Error('Prénom et nom obligatoires.');
     if (age < 25 || age > 80) throw new Error("L'âge doit être compris entre 25 et 80 ans.");
@@ -138,7 +139,7 @@ function viewTeamLegacy() {
       <div class="err" id="err"></div>
       <button id="go">Lancer ma carrière</button>
     </div>`;
-  $('go').onclick = () => withBusy($('go'),$('err'), async () => {
+  $('go').onclick = () => withBusy($('go'), $('err'), async () => {
     const name = $('tn').value.trim();
     if (!name) throw new Error("Donnez un nom à l'équipe.");
     let logoUrl = null;
@@ -178,7 +179,7 @@ async function viewTeam() {
       const pay = rs.concat(rd2).reduce((s, r) => s + Number(r.contract_salary || 0), 0), star = rs.slice().sort((a, b) => lvl(b) - lvl(a))[0];
       return `<div class="card offer"><div class="head"><span style="display:flex;gap:.6rem;align-items:center"><img class="tlogo" src="${esc(logoSrc(t))}" alt=""><b>${esc(t.name)}</b></span><span class="badge warn">WorldTour</span></div>
         <ul class="kv"><li>Équipe pro : ${rs.length} coureurs</li><li>${dv ? `Équipe de développement : ${rd2.length} coureurs (${esc(dv.name)})` : 'Pas d\'équipe de développement'}</li>
-        <li>Masse salariale : ${fmtEUR(pay)} / mois</li><li>Star :${star ? esc(star.first_name + ' ' + star.last_name) : '-'}</li></ul>
+        <li>Masse salariale : ${fmtEUR(pay)} / mois</li><li>Star : ${star ? esc(star.first_name + ' ' + star.last_name) : '-'}</li></ul>
         <button data-team="${t.id}">Choisir cette équipe</button></div>`;
     }).join('') || '<div class="card muted">Aucune équipe officielle disponible : les coureurs ne sont pas encore importés.<br><br><button id="legacy">Créer une équipe libre (mode test)</button></div>'}</div>
     <p><button class="link" id="out">Se déconnecter</button></p></div>`;
@@ -188,7 +189,7 @@ async function viewTeam() {
     if (error) { $('err').textContent = error.message; b.disabled = false; return; }
     await route();
   }));
-  if ($('legacy'))$('legacy').onclick = viewTeamLegacy;
+  if ($('legacy')) $('legacy').onclick = viewTeamLegacy;
   $('out').onclick = () => sb.auth.signOut();
 }
 
@@ -265,8 +266,8 @@ function viewGame() {
   document.querySelectorAll('[data-menu]').forEach((b) => (b.onclick = () => go(b.dataset.menu, MENUS[b.dataset.menu].subs[0][0])));
   document.querySelectorAll('[data-sub]').forEach((b) => (b.onclick = () => go(state.menu, b.dataset.sub)));
   document.querySelectorAll('[data-go]').forEach((b) => (b.onclick = () => go(...b.dataset.go.split('|'))));
-  $('back').onclick = () => step(-1);$('fwd').onclick = () => step(1);
-  $('out').onclick = () => sb.auth.signOut();$('cont').onclick = continueGame;
+  $('back').onclick = () => step(-1); $('fwd').onclick = () => step(1);
+  $('out').onclick = () => sb.auth.signOut(); $('cont').onclick = continueGame;
   $('gsearch').onkeydown = (e) => { if (e.key === 'Enter' && e.target.value.trim()) { state.q = e.target.value.trim(); dbf.name = state.q; go('recruit', 'search'); } };
   renderTab();
 }
@@ -274,7 +275,6 @@ function viewGame() {
 async function renderTab() {
   const c = $('content'), tab = state.tab;
   if (tab === 'rider') return renderRider(c);
-  if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
   if (tab === 'recruiters') return renderRecruiters(c);
@@ -308,11 +308,9 @@ function buildMessages(ctx) {
   ctx.races.filter((r) => r.status === 'SCHEDULED' && daysUntil(r.date) <= 14 && !ctx.entryByRace[r.id]).slice(0, 3).forEach((r) => out.push({ id: 'entry-' + r.id, from: 'Directeur sportif', cat: 'Compétition', title: `Composer l'équipe : ${r.name}`, body: `Course le ${fmtShort(r.date)}. Sans validation, la sélection sera automatique.`, task: true }));
   ctx.sums.forEach((s, i) => out.push({ id: 'sum-' + i + (s.races?.name || ''), from: 'Presse', cat: 'Résultat', title: `Résumé : ${s.races?.name || 'course'}`, body: s.summary_text, toRead: true }));
   out.push({ id: 'welcome', from: "Conseil d'administration", cat: 'Direction', title: `Bienvenue à la tête de ${t.official_name || t.name}`, body: 'Objectif de la saison : bâtir un budget solide grâce aux sponsors puis progresser au classement UCI.', toRead: true });
-  (ctx.offers || []).forEach((o) => out.push({ id: 'offer-' + o.id, from: 'Directeur sportif', cat: 'Transfert', offer: o,
-    title: o.status === 'OFFICIALIZED' ? `Transfert officialisé : ${o.name}` : `Accord final : ${o.name}`, task: o.status === 'CONTRACT_ACCEPTED',
-    time: o.updated_at ? new Date(o.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '',
+    (ctx.offers || []).forEach((o) => out.push({ id: 'offer-' + o.id, from: 'Directeur sportif', cat: 'Transfert', title: `Accord final : ${o.name}`, task: true,
     body: `L'agent et le club sont d'accord. Indemnité ${fmtEUR(o.offer_amount)}, salaire ${fmtEUR(o.offered_monthly_salary)} / mois, ${o.contract_years || 1} an(s).`,
-    action: o.status === 'CONTRACT_ACCEPTED' ? `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` : '' }));
+    action: `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` }));
   return out.map((m) => ({ ...m, date: today }));
 }
 
@@ -341,7 +339,7 @@ async function renderPortal(c) {
     sb.from('scouts').select('monthly_salary').eq('team_id', t.id),
   ]);
   const ctx = { riders: riders.data || [], races: races.data || [], mine: mine.data || [], sums: sums.data || [], entryByRace: Object.fromEntries((entries.data || []).map((e) => [e.race_id, e.status])) };
-  ctx.offers = typeof loadAcceptedOffers === 'function' ? await loadAcceptedOffers() : [];
+    ctx.offers = typeof loadAcceptedOffers === 'function' ? await loadAcceptedOffers() : [];
   const sum = (a, k) => a.reduce((s, x) => s + Number(x[k] || 0), 0);
   const payroll = sum(ctx.riders, 'contract_salary') + sum(staff.data || [], 'monthly_salary') + sum(scoutsRes.data || [], 'monthly_salary'), income = sum(ctx.mine, 'monthly_payout'), net = income - payroll;
   const health = net >= 0 ? 100 : Math.max(0, Math.min(100, Math.round((Number(t.budget) / -net / 6) * 100)));
@@ -371,7 +369,7 @@ async function renderPortal(c) {
         <div class="newsitem"><div><b>Classement UCI</b><div class="muted">Votre équipe est ${myRank}e sur ${rk.length} avec ${t.uci_points} points.</div></div></div>
         <div class="newsitem"><div><b>État de forme</b><div class="muted">Fatigue moyenne de l'effectif : ${avgFat}/100.</div></div></div></div>
       <div class="panel"><h4>Programme des courses</h4><table class="fm"><tr><th>Date</th><th>Course</th><th>Profil</th><th>Statut</th></tr>${upcoming.slice(0, 7).map((r) =>
-        `<tr><td>${fmtShort(r.date)}</td><td>${esc(r.name)}</td><td>${PROFILES[r.profile_type] || ''} ${r.distance_km \vert{}\vert{} ''} km</td><td>${ctx.entryByRace[r.id] === 'VALIDATED' ? 'Équipe validée' : 'À composer'}</td></tr>`).join('') || '<tr><td class="muted">Aucune course prévue.</td></tr>'}</table></div>
+        `<tr><td>${fmtShort(r.date)}</td><td>${esc(r.name)}</td><td>${PROFILES[r.profile_type] || ''} ${r.distance_km || ''} km</td><td>${ctx.entryByRace[r.id] === 'VALIDATED' ? 'Équipe validée' : 'À composer'}</td></tr>`).join('') || '<tr><td class="muted">Aucune course prévue.</td></tr>'}</table></div>
     </div>
     <div>
       <div class="panel"><h4>Classement UCI par équipes</h4><table class="fm"><tr><th>#</th><th></th><th>Équipe</th><th>Div.</th><th>Pts</th></tr>${rk.slice(0, 20).map((x, i) =>
@@ -380,7 +378,7 @@ async function renderPortal(c) {
         <div class="stat-row"><div>Fatigue moyenne<small>Effectif de ${ctx.riders.length} coureurs</small></div><b>${avgFat}</b></div></div>
     </div>
     <div>
-      <div class="panel"><h4>Prochaine épreuve</h4>${nr ? `<div class="big">${esc(nr.name)}</div><div class="muted">${fmtShort(nr.date)} · ${PROFILES[nr.profile_type] \vert{}\vert{} ''} ·${nr.distance_km || '?'} km</div>` : '<p class="muted">Aucune course prévue.</p>'}</div>
+      <div class="panel"><h4>Prochaine épreuve</h4>${nr ? `<div class="big">${esc(nr.name)}</div><div class="muted">${fmtShort(nr.date)} · ${PROFILES[nr.profile_type] || ''} · ${nr.distance_km || '?'} km</div>` : '<p class="muted">Aucune course prévue.</p>'}</div>
       <div class="panel"><h4>Budget & finances</h4><div class="muted">Budget disponible</div><div class="big">${fmtEUR(t.budget)}</div>
         <div class="stat-row"><span>Masse salariale / mois</span><b>${fmtEUR(payroll)}</b></div><div class="stat-row"><span>Revenus sponsors / mois</span><b>${fmtEUR(income)}</b></div>
         <div class="muted" style="margin-top:.4rem">Santé financière</div><div class="meter"><i style="width:${health}%"></i></div></div>

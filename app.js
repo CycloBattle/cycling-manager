@@ -275,6 +275,7 @@ function viewGame() {
 async function renderTab() {
   const c = $('content'), tab = state.tab;
   if (tab === 'rider') return renderRider(c);
+  if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
   if (tab === 'recruiters') return renderRecruiters(c);
@@ -308,9 +309,11 @@ function buildMessages(ctx) {
   ctx.races.filter((r) => r.status === 'SCHEDULED' && daysUntil(r.date) <= 14 && !ctx.entryByRace[r.id]).slice(0, 3).forEach((r) => out.push({ id: 'entry-' + r.id, from: 'Directeur sportif', cat: 'Compétition', title: `Composer l'équipe : ${r.name}`, body: `Course le ${fmtShort(r.date)}. Sans validation, la sélection sera automatique.`, task: true }));
   ctx.sums.forEach((s, i) => out.push({ id: 'sum-' + i + (s.races?.name || ''), from: 'Presse', cat: 'Résultat', title: `Résumé : ${s.races?.name || 'course'}`, body: s.summary_text, toRead: true }));
   out.push({ id: 'welcome', from: "Conseil d'administration", cat: 'Direction', title: `Bienvenue à la tête de ${t.official_name || t.name}`, body: 'Objectif de la saison : bâtir un budget solide grâce aux sponsors puis progresser au classement UCI.', toRead: true });
-    (ctx.offers || []).forEach((o) => out.push({ id: 'offer-' + o.id, from: 'Directeur sportif', cat: 'Transfert', title: `Accord final : ${o.name}`, task: true,
+  (ctx.offers || []).forEach((o) => out.push({ id: 'offer-' + o.id, from: 'Directeur sportif', cat: 'Transfert', offer: o,
+    title: o.status === 'OFFICIALIZED' ? `Transfert officialisé : ${o.name}` : `Accord final : ${o.name}`, task: o.status === 'CONTRACT_ACCEPTED',
+    time: o.updated_at ? new Date(o.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : '',
     body: `L'agent et le club sont d'accord. Indemnité ${fmtEUR(o.offer_amount)}, salaire ${fmtEUR(o.offered_monthly_salary)} / mois, ${o.contract_years || 1} an(s).`,
-    action: `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` }));
+    action: o.status === 'CONTRACT_ACCEPTED' ? `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` : '' })); `<div style="margin-top:.5rem"><button data-officialize="${o.id}">Officialiser le transfert</button></div>` }));
   return out.map((m) => ({ ...m, date: today }));
 }
 

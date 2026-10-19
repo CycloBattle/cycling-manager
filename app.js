@@ -203,7 +203,7 @@ const MENUS = {
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
   recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['recruiters', 'Staff de recrutement'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
-  club: { label: 'CLUB', subs: [['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
+  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
 };
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
@@ -279,6 +279,7 @@ async function renderTab() {
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
   if (tab === 'recruiters') return renderRecruiters(c);
   if (tab === 'missions') return renderMissions(c);
+  if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
   if (tab === 'contracts') return renderSponsors(c);
@@ -397,6 +398,62 @@ async function renderPortal(c) {
     }));
   };
   bind();
+}
+
+async function renderClubOverview(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, dv = state.devTeam, ids = myTeamIds();
+  const [tm, sp, st, sc, rs, inf, off] = await Promise.all([
+    sb.from('teams').select('id, name, official_name, uci_points').order('uci_points', { ascending: false }),
+    sb.from('team_sponsors').select('*, sponsors_catalog(name)').eq('team_id', t.id),
+    sb.from('staff').select('*').eq('team_id', t.id),
+    sb.from('scouts').select('monthly_salary').eq('team_id', t.id),
+    sb.from('riders').select('id, team_id, age, contract_salary').in('team_id', ids),
+    sb.from('team_infrastructures').select('*').eq('team_id', t.id),
+    sb.from('transfer_offers').select('*').or(`from_team_id.eq.${t.id},to_team_id.eq.${t.id}`).eq('status', 'OFFICIALIZED'),
+  ]);
+  const riders = rs.data || [], rid = riders.map((r) => r.id);
+  const { data: wr } = rid.length ? await sb.from('race_results').select('rider_id').in('rider_id', rid).eq('position', 1) : { data: [] };
+  const sum = (a, k) => (a || []).reduce((s, x) => s + Number(x[k] || 0), 0), kv = (l, v, cls = '') => `<div class="stat-row"><span>${l}</span><b class="${cls}">${v}</b></div>`;
+  const ranks = tm.data || [], rank = ranks.findIndex((x) => x.id === t.id) + 1, wt = t.division === 'WORLD_TOUR';
+  const pro = riders.filter((r) => r.team_id === t.id), dev = riders.filter((r) => dv && r.team_id === dv.id), wins = (wr || []).length;
+  const income = sum(sp.data, 'monthly_payout'), payroll = sum(riders, 'contract_salary'), staffCost = sum(st.data, 'monthly_salary') + sum(sc.data, 'monthly_salary'), maint = sum(inf.data, 'maintenance_cost');
+  const expenses = payroll + staffCost + maint, balance = income - expenses, pct = income ? Math.min(100, Math.round((payroll / income) * 100)) : 100;
+  const objectives = [
+    { l: `Terminer dans le top ${Math.ceil(ranks.length / 2)} du classement UCI`, p: 'Nécessaire', ok: rank > 0 && rank <= Math.ceil(ranks.length / 2), h: `Position actuelle : ${rank}e / ${ranks.length}` },
+    { l: wt ? 'Remporter 3 victoires WorldTour' : 'Remporter 3 victoires', p: 'Souhaitable', ok: wins >= 3, h: `${wins} / 3 victoires` },
+    { l: 'Équilibrer le budget mensuel', p: 'Nécessaire', ok: balance >= 0, h: `Solde mensuel : ${fmtEUR(balance)}` },
+    { l: 'Faire progresser 4 jeunes en équipe de développement', p: 'Préférable', ok: dev.length >= 4, h: `${dev.length} / 4 coureurs` },
+  ], met = objectives.filter((o) => o.ok).length, sat = Math.round((met / objectives.length) * 100);
+  const near = ranks.slice(Math.max(0, rank - 3), Math.max(0, rank - 3) + 5);
+  const roleN = (r) => (st.data || []).filter((x) => x.role === r).length, sRows = [['Directeurs sportifs', 0, 2], ['Entraîneurs', roleN('COACH'), 3], ['Attachés de presse', roleN('PRESS'), 1], ['Pôle médical (nutrition, kinés)', roleN('NUTRITIONIST') + roleN('MASSEUR'), 3], ['Recruteurs', (sc.data || []).length, 4]];
+  const INF = [['GYM', 'Centre de performance'], ['AERO_RD', 'Pôle R&D / matériel'], ['MEDICAL', 'Centre médical'], ['SCOUTING', 'Centre de scouting'], ['BUS', "Bus d'équipe"], ['VEHICLES', 'Flotte de véhicules']];
+  const lvl = (k) => (inf.data || []).find((x) => x.type === k)?.level || 0;
+  const arr = (off.data || []).filter((o) => o.from_team_id === t.id), dep = (off.data || []).filter((o) => o.to_team_id === t.id);
+  c.innerHTML = `<div class="rov">
+    <div class="panel"><h4>Site du club</h4><div style="display:flex;gap:.8rem;align-items:center"><img class="tlogo" src="${esc(logoSrc(t))}" alt=""><div><div class="big">${esc(t.official_name || t.name)}</div><div class="muted">${esc(NATS[t.nationality] || t.nationality)}</div></div></div>
+      ${kv('Division', wt ? 'WorldTour' : 'Continental Pro')}${kv('Réputation du club', wt ? 'Mondiale' : 'Nationale')}${kv('Points UCI', t.uci_points)}${kv('Effectif', pro.length + ' coureurs')}
+      <div class="muted" style="margin-top:.5rem">Classement UCI</div>${near.map((x) => `<div class="stat-row ${x.id === t.id ? 'up' : ''}"><span>${ranks.indexOf(x) + 1}. ${esc(x.official_name || x.name)}</span><b>${x.uci_points} pts</b></div>`).join('')}</div>
+    <div class="panel"><h4>Vision du club</h4><div class="muted">Objectifs du board (${objectives.length})</div>
+      ${objectives.map((o) => `<div class="stat-row"><div>${o.l}<small>${o.h} · ${o.p}</small></div><span class="bd ${o.ok ? 'green' : 'amber'}">${o.ok ? 'Atteint' : 'En cours'}</span></div>`).join('')}</div>
+    <div class="panel"><h4>Retours du board</h4><div class="big ${sat >= 50 ? 'up' : 'down'}">${sat >= 75 ? 'Très satisfait' : sat >= 50 ? 'Satisfait' : sat >= 25 ? 'Préoccupé' : 'Mécontent'}</div><div class="muted">${met} objectif(s) sur ${objectives.length} atteint(s)</div><div class="meter"><i style="width:${sat}%"></i></div>
+      ${kv('Santé financière', balance >= 0 ? 'Saine' : 'Déficitaire', balance >= 0 ? 'up' : 'down')}${kv('Sponsors signés', (sp.data || []).length)}</div>
+    <div class="panel"><h4>Finances</h4><div class="muted">Trésorerie globale</div><div class="big">${fmtEUR(state.team.budget)}</div>
+      ${kv('Revenus sponsors / mois', fmtEUR(income))}${kv('Dépenses / mois', fmtEUR(expenses))}${kv('Solde mensuel', fmtEUR(balance), balance >= 0 ? 'up' : 'down')}
+      <div class="muted" style="margin-top:.5rem">Masse salariale des coureurs : ${fmtEUR(payroll)} (${pct} % des revenus)</div><div class="meter"><i style="width:${pct}%"></i></div></div>
+    <div class="panel"><h4>Staff</h4>${sRows.map(([l, n, max]) => `<div class="stat-row"><div>${l}<small>${n >= max ? 'Complet' : max - n + ' poste(s) vacant(s)'}</small></div><b>${n} / ${max}</b></div>`).join('')}
+      ${kv('Coût du staff / mois', fmtEUR(staffCost))}<div class="rov-btns"><button data-cgo="recruit|recruiters">Staff de recrutement</button></div></div>
+    <div class="panel"><h4>Sponsors</h4>${(sp.data || []).map((x) => `<div class="stat-row"><span>${esc(x.sponsors_catalog?.name || 'Sponsor')}</span><b>${fmtEUR(x.monthly_payout)} / mois</b></div>`).join('') || '<p class="muted">Aucun sponsor signé.</p>'}
+      <div class="rov-btns"><button data-cgo="finance|contracts">Sponsors & Finances</button></div></div>
+    <div class="panel"><h4>Infrastructures</h4>${INF.map(([k, l]) => `<div class="stat-row"><span>${l}</span><span class="bd ${lvl(k) ? 'green' : 'spec'}">${lvl(k) ? 'Niv. ' + lvl(k) + ' / 5' : 'Non construit'}</span></div>`).join('')}
+      <div class="stat-row"><span>Centre de formation jeune</span><span class="bd ${dv ? 'green' : 'spec'}">${dv ? 'Équipe U23 liée' : 'Aucun'}</span></div></div>
+    <div class="panel"><h4>Historique des transferts</h4>${kv('Arrivées', `${arr.length} · ${fmtEUR(sum(arr, 'offer_amount'))}`)}${kv('Départs', `${dep.length} · ${fmtEUR(sum(dep, 'offer_amount'))}`)}
+      <div class="rov-btns"><button data-cgo="recruit|market">Marché des transferts</button></div></div>
+    <div class="panel"><h4>Équipe de développement</h4>${dv ? `<div style="display:flex;gap:.8rem;align-items:center"><img class="tlogo" src="${esc(logoSrc(dv))}" alt=""><div class="big">${esc(dv.official_name || dv.name)}</div></div>
+      ${kv('Coureurs', dev.length)}${kv('Âge moyen', dev.length ? (sum(dev, 'age') / dev.length).toFixed(1) + ' ans' : '-')}${kv('Masse salariale / mois', fmtEUR(sum(dev, 'contract_salary')))}
+      <div class="rov-btns"><button data-cgo="squad|squad_u23">Voir l'équipe U23</button></div>` : '<p class="muted">Aucune équipe de développement liée à ce club.</p>'}</div>
+  </div>`;
+  c.onclick = (e) => { const b = e.target.closest('[data-cgo]'); if (b) go(...b.dataset.cgo.split('|')); };
 }
 
 // ---------- Démarrage ----------

@@ -176,37 +176,56 @@ function drawDb(mode) {
 const zoneLabel = (a) => [a.target_region || 'Toutes zones', a.target_specialty || 'toutes spécialités', a.target_min_potential != null ? `potentiel ${a.target_min_potential}★ min` : null].filter(Boolean).join(' · ');
 const bar20 = (v) => `<span class="mini"><i style="width:${v * 5}%"></i></span> ${v}/20`;
 
-async function renderRecruiters(c) {
+async function renderRecruitOverview(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
-  const tid = state.team.id;
-  const [mine, pool, asg] = await Promise.all([
-    sb.from('scouts').select('*').eq('team_id', tid).order('name'),
-    sb.from('scouts').select('*').is('team_id', null).order('name'),
+  const t = state.team, tid = t.id, g = state.game, ids = myTeamIds(), ACTIVE = ['PENDING_CLUB', 'CLUB_ACCEPTED', 'NEGOTIATING_CONTRACT', 'CONTRACT_ACCEPTED'];
+  const [sc, asg, rep, wl, off, rs, st, sp] = await Promise.all([
+    sb.from('scouts').select('*').eq('team_id', tid),
     sb.from('scouting_assignments').select('*').eq('status', 'ACTIVE'),
+    sb.from('scouting_reports').select('knowledge').eq('team_id', tid),
+    sb.from('watchlist').select('rider_id', { count: 'exact', head: true }).eq('team_id', tid),
+    sb.from('transfer_offers').select('*').or(`from_team_id.eq.${tid},to_team_id.eq.${tid}`),
+    sb.from('riders').select('*').in('team_id', ids),
+    sb.from('staff').select('monthly_salary').eq('team_id', tid),
+    sb.from('team_sponsors').select('monthly_payout').eq('team_id', tid),
   ]);
-  const my = mine.data || [], act = asg.data || [], fq = scoutFactors(my);
-  const card = (s, own) => {
-    const m = act.find((a) => a.scout_id === s.id);
-    const known = Object.entries(s.knowledge_countries || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${flag(k)} ${v}%`).join(' · ');
-    return `<div class="card offer"><div class="head"><b>${esc(s.name)}</b><span class="muted">${s.age} ans · ${flag(s.country)}</span></div>
-      <ul class="kv"><li>Évaluation du niveau (CA) : ${bar20(s.judging_current_ability)}</li><li>Évaluation du potentiel (PA) : ${bar20(s.judging_potential_ability)}</li><li>Adaptabilité : ${bar20(s.adaptability)}</li></ul>
-      <div class="muted">Pays connus : ${known || 'aucun'}</div><div>${fmtEUR(s.monthly_salary)} / mois</div>
-      ${own ? (m ? `<span class="badge warn">Mission : ${esc(zoneLabel(m))}</span>` : '<span class="badge">Disponible</span>') : ''}
-      ${own ? `<button data-assign="${s.id}" ${m ? 'disabled' : ''}>Affecter une mission</button><button class="danger" data-fire="${s.id}">Licencier</button>` : `<button data-hire="${s.id}">Embaucher</button>`}</div>`;
-  };
-  c.innerHTML = `<div class="panel full"><h4>Staff de recrutement</h4>
-      <div class="muted">${my.length} / 4 recruteurs · salaires ${fmtEUR(my.reduce((s, x) => s + Number(x.monthly_salary), 0))} / mois · précision des fourchettes : niveau ×${fq.ca.toFixed(2)}, potentiel ×${fq.pa.toFixed(2)} (plus c'est bas, mieux c'est)</div>
-      <div class="grid2" style="margin-top:.6rem">${my.map((s) => card(s, true)).join('') || '<div class="card muted">Aucun recruteur : embauchez-en un ci-dessous.</div>'}</div></div>
-    <div class="panel full" style="margin-top:.75rem"><h4>Recruteurs disponibles</h4><div class="grid2">${(pool.data || []).map((s) => card(s, false)).join('') || '<div class="card muted">Aucun recruteur disponible.</div>'}</div></div>`;
-  c.onclick = async (e) => {
-    const b = e.target.closest('[data-assign],[data-fire],[data-hire]'); if (!b) return;
-    if (b.dataset.assign) { mission.scout = b.dataset.assign; return go('recruit', 'missions'); }
-    if (b.dataset.fire && !confirm('Licencier ce recruteur ? Sa mission en cours sera supprimée.')) return;
-    b.disabled = true;
-    const { error } = b.dataset.fire ? await sb.rpc('fire_scout', { p_scout: b.dataset.fire }) : await sb.rpc('hire_scout', { p_scout: b.dataset.hire });
-    if (error) { toast(error.message); b.disabled = false; return; }
-    toast(b.dataset.fire ? 'Recruteur licencié.' : 'Recruteur embauché.'); renderRecruiters(c);
-  };
+  const scouts = sc.data || [], act = asg.data || [], reports = rep.data || [], offers = off.data || [], riders = enrich(rs.data || [], g.game_date);
+  const sum = (a, k) => (a || []).reduce((s, x) => s + Number(x[k] || 0), 0);
+  const mineO = offers.filter((o) => o.from_team_id === tid), inc = offers.filter((o) => o.to_team_id === tid);
+  const inProg = mineO.filter((o) => ACTIVE.includes(o.status)), agreed = mineO.filter((o) => o.status === 'CONTRACT_ACCEPTED');
+  const arrivals = mineO.filter((o) => o.status === 'OFFICIALIZED'), departures = inc.filter((o) => o.status === 'OFFICIALIZED');
+  const zone = !act.length ? 'Aucune mission' : act.some((a) => !a.target_region) ? 'Monde' : [...new Set(act.map((a) => a.target_region))].join(', ');
+  const payroll = sum(riders, 'contract_salary') + sum(st.data, 'monthly_salary') + sum(scouts, 'monthly_salary'), income = sum(sp.data, 'monthly_payout');
+  const today = gd(g.game_date), mLeft = (r) => (r.contract_end_year ? (new Date(r.contract_end_year + '-12-31T12:00:00') - today) / (30.44 * 864e5) : 999);
+  const bucket = (a, b) => riders.filter((r) => mLeft(r) >= a && mLeft(r) < b).length, expiring = riders.filter((r) => mLeft(r) < 12).sort((a, b) => mLeft(a) - mLeft(b));
+  const specN = (s) => riders.filter((r) => r.spec === s).length, u23 = riders.filter((r) => r.age <= 22).length;
+  const objectives = [
+    ...[['MTN', 'un grimpeur'], ['SPR', 'un sprinteur'], ['CLM', 'un rouleur (contre-la-montre)'], ['VAL', 'un puncheur'], ['FLA', 'un spécialiste des pavés']].map(([s, l]) => ({
+      label: `Recruter ${l}`, done: specN(s) >= 2, hint: `${specN(s)} / 2 dans l'effectif`, go: () => { dbf.spec = s; dbf.ageMax = ''; go('recruit', 'search'); } })),
+    { label: 'Recruter des coureurs de moins de 23 ans', done: u23 >= 4, hint: `${u23} / 4 dans l'effectif`, go: () => { dbf.spec = 'all'; dbf.ageMax = '22'; go('recruit', 'search'); } },
+    { label: 'Prolonger les contrats qui expirent sous 12 mois', done: !expiring.length, hint: `${expiring.length} coureur(s) concerné(s)`, go: () => go('squad', 'squad_pro') },
+  ];
+  const kv = (l, v, cls = '') => `<div class="stat-row"><span>${l}</span><b class="${cls}">${v}</b></div>`;
+  c.innerHTML = `<div class="rov">
+    <div class="panel"><h4>Réseau de recrutement</h4><div class="big">${esc(zone)}</div><div class="muted">Zone active des recruteurs</div>
+      ${kv('Recruteurs', scouts.length + ' / 4')}${kv('Missions actives', act.length)}${kv('Rapports disponibles', reports.filter((x) => x.knowledge >= 50).length)}${kv('Coureurs observés', reports.filter((x) => x.knowledge > 0).length)}${kv('Liste de sélection', wl.count ?? 0)}
+      <div class="rov-btns"><button data-rgo="recruiters">Staff de recrutement</button><button data-rgo="missions">Recherches ciblées</button></div></div>
+    <div class="panel"><h4>Marché des transferts</h4><div class="big up">Ouvert</div><div class="muted">Fenêtre de transferts</div>
+      ${kv('Offres en cours', inProg.length)}${kv('Accords conclus (à officialiser)', agreed.length)}${kv('Offres reçues pour vos coureurs', inc.filter((o) => ACTIVE.includes(o.status)).length)}
+      <div class="muted" style="margin-top:.5rem">Historique</div>${kv('Transferts (arrivées)', `${arrivals.length} · ${fmtEUR(sum(arrivals, 'offer_amount'))}`)}${kv('Transferts (départs)', `${departures.length} · ${fmtEUR(sum(departures, 'offer_amount'))}`)}
+      <div class="rov-btns"><button data-rgo="market">Marché des transferts</button></div></div>
+    <div class="panel"><h4>Budgets pour les recrutements</h4><div class="muted">Transfert / rachat disponible</div><div class="big">${fmtEUR(t.budget)}</div>
+      <div class="muted" style="margin-top:.5rem">Masse salariale disponible (par mois)</div><div class="big ${income - payroll < 0 ? 'down' : ''}">${fmtEUR(income - payroll)}</div>
+      ${kv('Revenus sponsors', fmtEUR(income))}${kv('Masse salariale engagée', fmtEUR(payroll))}
+      <div class="muted" style="margin-top:.5rem">Recrutement (par mois)</div>${kv('Coût des recruteurs', fmtEUR(sum(scouts, 'monthly_salary')))}</div>
+    <div class="panel span2"><h4>Contrats</h4><div class="big">${riders.length} coureurs sous contrat</div>
+      <div class="rov-buckets">${[['0-6M', 0, 6], ['6-12M', 6, 12], ['1-2A', 12, 24], ['2A +', 24, 999]].map(([l, a, b]) => `<div class="rov-b"><b>${bucket(a, b)}</b><span>${l}</span></div>`).join('')}</div>
+      <div class="muted" style="margin:.6rem 0 .3rem">Moins de 12 mois restant sur le contrat</div>
+      ${expiring.length ? `<div class="rov-exp">${expiring.slice(0, 12).map((r) => `<div><a class="rl" data-rider="${r.id}">${esc(r.first_name)} ${esc(r.last_name)}</a><div class="muted">Expire le 31/12/${r.contract_end_year}</div></div>`).join('')}</div>` : '<p class="muted">Aucun contrat n\'expire dans les 12 mois.</p>'}</div>
+    <div class="panel"><h4>Objectifs de recrutement</h4><div class="muted">Demandes de la direction</div>
+      ${objectives.map((o, i) => `<div class="stat-row"><div>${o.label}<small>${o.hint}</small></div><span style="display:flex;gap:.4rem;align-items:center"><span class="bd ${o.done ? 'green' : 'amber'}">${o.done ? 'Atteint' : 'À faire'}</span>${o.done ? '' : `<button data-obj="${i}">Chercher</button>`}</span></div>`).join('')}</div>
+  </div>`;
+  c.onclick = (e) => { const b = e.target.closest('[data-rgo]'), ob = e.target.closest('[data-obj]'); if (b) go('recruit', b.dataset.rgo); else if (ob) objectives[+ob.dataset.obj].go(); };
 }
 
 /* ---------- Recherches ciblées : missions d'observation ---------- */
@@ -397,56 +416,4 @@ async function openNegotiationModal(riderId) {
     toast(`Offre envoyée${club ? ' à ' + club : ''} pour ${r.first_name} ${r.last_name}.`);
     negClose(); negRefresh();
   };
-}
-
-async function renderRecruitOverview(c) {
-  c.innerHTML = '<p class="muted pad">Chargement…</p>';
-  const t = state.team, tid = t.id, g = state.game, ids = myTeamIds(), ACTIVE = ['PENDING_CLUB', 'CLUB_ACCEPTED', 'NEGOTIATING_CONTRACT', 'CONTRACT_ACCEPTED'];
-  const [sc, asg, rep, wl, off, rs, st, sp] = await Promise.all([
-    sb.from('scouts').select('*').eq('team_id', tid),
-    sb.from('scouting_assignments').select('*').eq('status', 'ACTIVE'),
-    sb.from('scouting_reports').select('knowledge').eq('team_id', tid),
-    sb.from('watchlist').select('rider_id', { count: 'exact', head: true }).eq('team_id', tid),
-    sb.from('transfer_offers').select('*').or(`from_team_id.eq.${tid},to_team_id.eq.${tid}`),
-    sb.from('riders').select('*').in('team_id', ids),
-    sb.from('staff').select('monthly_salary').eq('team_id', tid),
-    sb.from('team_sponsors').select('monthly_payout').eq('team_id', tid),
-  ]);
-  const scouts = sc.data || [], act = asg.data || [], reports = rep.data || [], offers = off.data || [], riders = enrich(rs.data || [], g.game_date);
-  const sum = (a, k) => (a || []).reduce((s, x) => s + Number(x[k] || 0), 0);
-  const mineO = offers.filter((o) => o.from_team_id === tid), inc = offers.filter((o) => o.to_team_id === tid);
-  const inProg = mineO.filter((o) => ACTIVE.includes(o.status)), agreed = mineO.filter((o) => o.status === 'CONTRACT_ACCEPTED');
-  const arrivals = mineO.filter((o) => o.status === 'OFFICIALIZED'), departures = inc.filter((o) => o.status === 'OFFICIALIZED');
-  const zone = !act.length ? 'Aucune mission' : act.some((a) => !a.target_region) ? 'Monde' : [...new Set(act.map((a) => a.target_region))].join(', ');
-  const payroll = sum(riders, 'contract_salary') + sum(st.data, 'monthly_salary') + sum(scouts, 'monthly_salary'), income = sum(sp.data, 'monthly_payout');
-  const today = gd(g.game_date), mLeft = (r) => (r.contract_end_year ? (new Date(r.contract_end_year + '-12-31T12:00:00') - today) / (30.44 * 864e5) : 999);
-  const bucket = (a, b) => riders.filter((r) => mLeft(r) >= a && mLeft(r) < b).length, expiring = riders.filter((r) => mLeft(r) < 12).sort((a, b) => mLeft(a) - mLeft(b));
-  const specN = (s) => riders.filter((r) => r.spec === s).length, u23 = riders.filter((r) => r.age <= 22).length;
-  const objectives = [
-    ...[['MTN', 'un grimpeur'], ['SPR', 'un sprinteur'], ['CLM', 'un rouleur (contre-la-montre)'], ['VAL', 'un puncheur'], ['FLA', 'un spécialiste des pavés']].map(([s, l]) => ({
-      label: `Recruter ${l}`, done: specN(s) >= 2, hint: `${specN(s)} / 2 dans l'effectif`, go: () => { dbf.spec = s; dbf.ageMax = ''; go('recruit', 'search'); } })),
-    { label: 'Recruter des coureurs de moins de 23 ans', done: u23 >= 4, hint: `${u23} / 4 dans l'effectif`, go: () => { dbf.spec = 'all'; dbf.ageMax = '22'; go('recruit', 'search'); } },
-    { label: 'Prolonger les contrats qui expirent sous 12 mois', done: !expiring.length, hint: `${expiring.length} coureur(s) concerné(s)`, go: () => go('squad', 'squad_pro') },
-  ];
-  const kv = (l, v, cls = '') => `<div class="stat-row"><span>${l}</span><b class="${cls}">${v}</b></div>`;
-  c.innerHTML = `<div class="rov">
-    <div class="panel"><h4>Réseau de recrutement</h4><div class="big">${esc(zone)}</div><div class="muted">Zone active des recruteurs</div>
-      ${kv('Recruteurs', scouts.length + ' / 4')}${kv('Missions actives', act.length)}${kv('Rapports disponibles', reports.filter((x) => x.knowledge >= 50).length)}${kv('Coureurs observés', reports.filter((x) => x.knowledge > 0).length)}${kv('Liste de sélection', wl.count ?? 0)}
-      <div class="rov-btns"><button data-rgo="recruiters">Staff de recrutement</button><button data-rgo="missions">Recherches ciblées</button></div></div>
-    <div class="panel"><h4>Marché des transferts</h4><div class="big up">Ouvert</div><div class="muted">Fenêtre de transferts</div>
-      ${kv('Offres en cours', inProg.length)}${kv('Accords conclus (à officialiser)', agreed.length)}${kv('Offres reçues pour vos coureurs', inc.filter((o) => ACTIVE.includes(o.status)).length)}
-      <div class="muted" style="margin-top:.5rem">Historique</div>${kv('Transferts (arrivées)', `${arrivals.length} · ${fmtEUR(sum(arrivals, 'offer_amount'))}`)}${kv('Transferts (départs)', `${departures.length} · ${fmtEUR(sum(departures, 'offer_amount'))}`)}
-      <div class="rov-btns"><button data-rgo="market">Marché des transferts</button></div></div>
-    <div class="panel"><h4>Budgets pour les recrutements</h4><div class="muted">Transfert / rachat disponible</div><div class="big">${fmtEUR(t.budget)}</div>
-      <div class="muted" style="margin-top:.5rem">Masse salariale disponible (par mois)</div><div class="big ${income - payroll < 0 ? 'down' : ''}">${fmtEUR(income - payroll)}</div>
-      ${kv('Revenus sponsors', fmtEUR(income))}${kv('Masse salariale engagée', fmtEUR(payroll))}
-      <div class="muted" style="margin-top:.5rem">Recrutement (par mois)</div>${kv('Coût des recruteurs', fmtEUR(sum(scouts, 'monthly_salary')))}</div>
-    <div class="panel span2"><h4>Contrats</h4><div class="big">${riders.length} coureurs sous contrat</div>
-      <div class="rov-buckets">${[['0-6M', 0, 6], ['6-12M', 6, 12], ['1-2A', 12, 24], ['2A +', 24, 999]].map(([l, a, b]) => `<div class="rov-b"><b>${bucket(a, b)}</b><span>${l}</span></div>`).join('')}</div>
-      <div class="muted" style="margin:.6rem 0 .3rem">Moins de 12 mois restant sur le contrat</div>
-      ${expiring.length ? `<div class="rov-exp">${expiring.slice(0, 12).map((r) => `<div><a class="rl" data-rider="${r.id}">${esc(r.first_name)} ${esc(r.last_name)}</a><div class="muted">Expire le 31/12/${r.contract_end_year}</div></div>`).join('')}</div>` : '<p class="muted">Aucun contrat n\'expire dans les 12 mois.</p>'}</div>
-    <div class="panel"><h4>Objectifs de recrutement</h4><div class="muted">Demandes de la direction</div>
-      ${objectives.map((o, i) => `<div class="stat-row"><div>${o.label}<small>${o.hint}</small></div><span style="display:flex;gap:.4rem;align-items:center"><span class="bd ${o.done ? 'green' : 'amber'}">${o.done ? 'Atteint' : 'À faire'}</span>${o.done ? '' : `<button data-obj="${i}">Chercher</button>`}</span></div>`).join('')}</div>
-  </div>`;
-  c.onclick = (e) => { const b = e.target.closest('[data-rgo]'), ob = e.target.closest('[data-obj]'); if (b) go('recruit', b.dataset.rgo); else if (ob) objectives[+ob.dataset.obj].go(); };
 }

@@ -176,6 +176,39 @@ function drawDb(mode) {
 const zoneLabel = (a) => [a.target_region || 'Toutes zones', a.target_specialty || 'toutes spécialités', a.target_min_potential != null ? `potentiel ${a.target_min_potential}★ min` : null].filter(Boolean).join(' · ');
 const bar20 = (v) => `<span class="mini"><i style="width:${v * 5}%"></i></span> ${v}/20`;
 
+async function renderRecruiters(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const tid = state.team.id;
+  const [mine, pool, asg] = await Promise.all([
+    sb.from('scouts').select('*').eq('team_id', tid).order('name'),
+    sb.from('scouts').select('*').is('team_id', null).order('name'),
+    sb.from('scouting_assignments').select('*').eq('status', 'ACTIVE'),
+  ]);
+  const my = mine.data || [], act = asg.data || [], fq = scoutFactors(my);
+  const card = (s, own) => {
+    const m = act.find((a) => a.scout_id === s.id);
+    const known = Object.entries(s.knowledge_countries || {}).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `${flag(k)} ${v}%`).join(' · ');
+    return `<div class="card offer"><div class="head"><b>${esc(s.name)}</b><span class="muted">${s.age} ans · ${flag(s.country)}</span></div>
+      <ul class="kv"><li>Évaluation du niveau (CA) : ${bar20(s.judging_current_ability)}</li><li>Évaluation du potentiel (PA) : ${bar20(s.judging_potential_ability)}</li><li>Adaptabilité : ${bar20(s.adaptability)}</li></ul>
+      <div class="muted">Pays connus : ${known || 'aucun'}</div><div>${fmtEUR(s.monthly_salary)} / mois</div>
+      ${own ? (m ? `<span class="badge warn">Mission : ${esc(zoneLabel(m))}</span>` : '<span class="badge">Disponible</span>') : ''}
+      ${own ? `<button data-assign="${s.id}" ${m ? 'disabled' : ''}>Affecter une mission</button><button class="danger" data-fire="${s.id}">Licencier</button>` : `<button data-hire="${s.id}">Embaucher</button>`}</div>`;
+  };
+  c.innerHTML = `<div class="panel full"><h4>Staff de recrutement</h4>
+      <div class="muted">${my.length} / 4 recruteurs · salaires ${fmtEUR(my.reduce((s, x) => s + Number(x.monthly_salary), 0))} / mois · précision des fourchettes : niveau ×${fq.ca.toFixed(2)}, potentiel ×${fq.pa.toFixed(2)} (plus c'est bas, mieux c'est)</div>
+      <div class="grid2" style="margin-top:.6rem">${my.map((s) => card(s, true)).join('') || '<div class="card muted">Aucun recruteur : embauchez-en un ci-dessous.</div>'}</div></div>
+    <div class="panel full" style="margin-top:.75rem"><h4>Recruteurs disponibles</h4><div class="grid2">${(pool.data || []).map((s) => card(s, false)).join('') || '<div class="card muted">Aucun recruteur disponible.</div>'}</div></div>`;
+  c.onclick = async (e) => {
+    const b = e.target.closest('[data-assign],[data-fire],[data-hire]'); if (!b) return;
+    if (b.dataset.assign) { mission.scout = b.dataset.assign; return go('recruit', 'missions'); }
+    if (b.dataset.fire && !confirm('Licencier ce recruteur ? Sa mission en cours sera supprimée.')) return;
+    b.disabled = true;
+    const { error } = b.dataset.fire ? await sb.rpc('fire_scout', { p_scout: b.dataset.fire }) : await sb.rpc('hire_scout', { p_scout: b.dataset.hire });
+    if (error) { toast(error.message); b.disabled = false; return; }
+    toast(b.dataset.fire ? 'Recruteur licencié.' : 'Recruteur embauché.'); renderRecruiters(c);
+  };
+}
+
 async function renderRecruitOverview(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, tid = t.id, g = state.game, ids = myTeamIds(), ACTIVE = ['PENDING_CLUB', 'CLUB_ACCEPTED', 'NEGOTIATING_CONTRACT', 'CONTRACT_ACCEPTED'];

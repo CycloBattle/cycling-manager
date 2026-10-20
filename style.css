@@ -222,3 +222,6 @@ table.sq button[data-obs] { padding:.2rem .6rem; font-size:.75rem; }
 .rov-b { flex:1; background:#1f2937; border:1px solid #374151; border-radius:6px; padding:.5rem; text-align:center; } .rov-b b { display:block; font-size:1.3rem; } .rov-b span { font-size:.75rem; color:var(--muted); }
 .rov-exp { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.5rem 1rem; font-size:.85rem; }
 @media (max-width:1000px) { .rov { grid-template-columns:1fr; } .rov .span2 { grid-column:auto; } .rov-exp { grid-template-columns:1fr; } }
+
+.span3 { grid-column:1 / -1; } .rov .span3 > .panel { margin-top:0; }
+.staffnav { margin-bottom:.75rem; } .staffnav button { font-size:.9rem; padding:.4rem .9rem; }

@@ -279,6 +279,7 @@ async function renderTab() {
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
   if (tab === 'recruiters') return renderRecruiters(c);
   if (tab === 'missions') return renderMissions(c);
+  if (tab === 'staff') return renderStaffOverview(c);
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
@@ -454,6 +455,32 @@ async function renderClubOverview(c) {
       <div class="rov-btns"><button data-cgo="squad|squad_u23">Voir l'équipe U23</button></div>` : '<p class="muted">Aucune équipe de développement liée à ce club.</p>'}</div>
   </div>`;
   c.onclick = (e) => { const b = e.target.closest('[data-cgo]'); if (b) go(...b.dataset.cgo.split('|')); };
+}
+
+async function renderStaffOverview(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, di = t.division === 'WORLD_TOUR' ? 0 : t.division === 'PRO_TEAM' ? 1 : 2;   // WorldTour / ProTeam / Continental
+  const [st, sc] = await Promise.all([sb.from('staff').select('*').eq('team_id', t.id), sb.from('scouts').select('monthly_salary').eq('team_id', t.id)]);
+  const ALIAS = { COACH: 'DS', MASSEUR: 'PHYSIO' }, cnt = { SCOUT: (sc.data || []).length }, cost = {};
+  (st.data || []).forEach((x) => { const k = ALIAS[x.role] || x.role; cnt[k] = (cnt[k] || 0) + 1; cost[k] = (cost[k] || 0) + Number(x.monthly_salary || 0); });
+  cost.SCOUT = (sc.data || []).reduce((s, x) => s + Number(x.monthly_salary || 0), 0);
+  const POLES = [
+    { name: 'Entraînement et encadrement', cap: [10, 7, 4], roles: [['HEAD_DS', 'Directeur sportif en chef', [1, 1, 1]], ['DS', 'Entraîneur / Directeur sportif', [4, 3, 1]], ['TRAINER', 'Préparateur physique', [3, 2, 1]], ['TACTICS', 'Responsable tactique / course', [2, 1, 1]]] },
+    { name: 'Recrutement', cap: [8, 5, 3], roles: [['RECRUIT_HEAD', 'Responsable du recrutement', [1, 1, 1]], ['SCOUT', 'Scout / Éclaireur', [5, 3, 1]], ['ANALYST', 'Analyste de données', [2, 1, 1]]] },
+    { name: 'Médical et performance', cap: [10, 7, 4], roles: [['DOCTOR', "Médecin d'équipe", [2, 1, 1]], ['PHYSIO', 'Kinésithérapeute / Ostéopathe', [4, 3, 1]], ['NUTRITIONIST', 'Nutritionniste', [2, 1, 1]], ['MECHANIC', 'Mécanicien chef', [2, 2, 1]]] },
+  ];
+  const card = (p) => {
+    const cap = p.cap[di], have = p.roles.reduce((s, [k, , q]) => s + Math.min(cnt[k] || 0, q[di]), 0), min = Math.ceil(cap * 0.7), pay = p.roles.reduce((s, [k]) => s + (cost[k] || 0), 0);
+    const miss = p.roles.filter(([k, , q]) => (cnt[k] || 0) < q[di]).map(([k, l, q]) => `${l} (${cnt[k] || 0}/${q[di]})`).slice(0, 3).join(', ');
+    const fb = have >= cap ? `Le pôle ${p.name.toLowerCase()} est complet : les dirigeants sont pleinement satisfaits.`
+      : have >= min ? `Le pôle est bien pourvu (${have}/${cap}). À compléter : ${miss}.`
+      : `Avec ${have} membre(s) sur ${cap} postes, le pôle est sous-effectif : les dirigeants attendent au moins ${min} membres. Priorité : ${miss}.`;
+    return `<div class="panel"><h4>${p.name}</h4><div class="big">${have} / ${cap} <span class="muted" style="font-size:.8rem;font-weight:400">postes pourvus</span></div><div class="meter"><i style="width:${Math.round((have / cap) * 100)}%"></i></div>
+      ${p.roles.map(([k, l, q]) => { const n = cnt[k] || 0, m = q[di]; return `<div class="stat-row"><span><span class="bd ${n >= m ? 'green' : n === 0 ? 'red' : 'amber'}">${n}/${m}</span> ${l}</span><span class="mini"><i style="width:${Math.min(100, (n / m) * 100)}%"></i></span></div>`; }).join('')}
+      <div class="stat-row"><span>Coût du pôle</span><b>${fmtEUR(pay)} / mois</b></div>
+      <div class="muted" style="margin-top:.6rem"><b>Retour du comité directeur</b></div><p class="${have >= min ? '' : 'down'}" style="margin:.2rem 0 0;font-size:.85rem">${fb}</p></div>`;
+  };
+  c.innerHTML = `<div class="rov">${POLES.map(card).join('')}</div>`;
 }
 
 // ---------- Démarrage ----------

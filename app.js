@@ -203,7 +203,7 @@ const MENUS = {
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
   recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['recruiters', 'Staff de recrutement'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
-  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff', 'Staff'], ['ranking', 'Classement UCI']] },
+  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['ranking', 'Classement UCI']] },
 };
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
@@ -257,7 +257,7 @@ function viewGame() {
         </div>
       </div>
       <div class="fm-row2">
-        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab ? 'on' : ''}">${l}</button>`).join('')}</nav>
+        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab || (k === 'staff_overview' && state.tab.startsWith('staff_')) ? 'on' : ''}">${l}</button>`).join('')}</nav>
         <nav class="fm-quick">${quick.map(([k, l]) => `<button data-go="${k}">${l}</button>`).join('')}</nav>
       </div>
     </header>
@@ -279,7 +279,9 @@ async function renderTab() {
   if (tab === 'search' || tab === 'watch') return renderDatabase(c, tab);
   if (tab === 'recruiters') return renderRecruiters(c);
   if (tab === 'missions') return renderMissions(c);
-  if (tab === 'staff') return renderStaffOverview(c);
+  if (tab === 'staff_overview') return renderStaffOverview(c);
+  if (tab === 'staff_detail') return renderStaffDetail(c);
+  if (tab.startsWith('staff_')) return renderStaffList(c, tab);
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
@@ -457,30 +459,87 @@ async function renderClubOverview(c) {
   c.onclick = (e) => { const b = e.target.closest('[data-cgo]'); if (b) go(...b.dataset.cgo.split('|')); };
 }
 
+const STAFF_TABS = [['staff_overview', "Vue d'ensemble"], ['staff_coaching', "Équipe d'encadrement"], ['staff_scouting', 'Équipe de recrutement'], ['staff_medical', 'Équipe médicale'], ['staff_all', 'Tout le staff']];
+const STAFF_ALIAS = { COACH: 'DS', MASSEUR: 'PHYSIO' };
+const STAFF_POLES = {   // quotas par division : [WorldTour, ProTeam, Continental]
+  staff_coaching: { name: "Équipe d'encadrement", cap: [10, 7, 4], roles: [['HEAD_DS', 'Directeur sportif en chef', [1, 1, 1]], ['DS', 'Entraîneur / Directeur sportif', [4, 3, 1]], ['TRAINER', 'Préparateur physique', [3, 2, 1]], ['TACTICS', 'Responsable tactique / course', [2, 1, 1]]] },
+  staff_scouting: { name: 'Équipe de recrutement', cap: [8, 5, 3], roles: [['RECRUIT_HEAD', 'Responsable du recrutement', [1, 1, 1]], ['SCOUT', 'Scout / Éclaireur', [5, 3, 1]], ['ANALYST', 'Analyste de données', [2, 1, 1]]] },
+  staff_medical: { name: 'Équipe médicale et performance', cap: [10, 7, 4], roles: [['DOCTOR', "Médecin d'équipe", [2, 1, 1]], ['PHYSIO', 'Kinésithérapeute / Ostéopathe', [4, 3, 1]], ['NUTRITIONIST', 'Nutritionniste', [2, 1, 1]], ['MECHANIC', 'Mécanicien chef', [2, 2, 1]]] },
+};
+const STAFF_LABEL = { PRESS: 'Attaché de presse', ...Object.fromEntries(Object.values(STAFF_POLES).flatMap((p) => p.roles.map((r) => [r[0], r[1]]))) };
+const staffDiv = () => (state.team.division === 'WORLD_TOUR' ? 0 : state.team.division === 'PRO_TEAM' ? 1 : 2);
+const staffNavHTML = (tab) => `<div class="tabs staffnav">${STAFF_TABS.map(([k, l]) => `<button data-snav="${k}" class="${k === tab ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+
+async function loadStaff() {
+  const [st, sc] = await Promise.all([sb.from('staff').select('*').eq('team_id', state.team.id), sb.from('scouts').select('*').eq('team_id', state.team.id)]);
+  return [
+    ...(st.data || []).map((x) => ({ key: 'staff:' + x.id, name: x.name, role: STAFF_ALIAS[x.role] || x.role, nat: x.nationality, type: x.contract_type || 'Plein temps', salary: Number(x.monthly_salary || 0), end: x.contract_end_year })),
+    ...(sc.data || []).map((x) => ({ key: 'scout:' + x.id, name: x.name, role: 'SCOUT', nat: x.country, type: 'Plein temps', salary: Number(x.monthly_salary || 0), end: null })),
+  ];
+}
+
+function staffPoleCard(p, rows, compact) {
+  const di = staffDiv(), cnt = {}, cost = {};
+  rows.forEach((x) => { cnt[x.role] = (cnt[x.role] || 0) + 1; cost[x.role] = (cost[x.role] || 0) + x.salary; });
+  const cap = p.cap[di], have = p.roles.reduce((s, [k, , q]) => s + Math.min(cnt[k] || 0, q[di]), 0), min = Math.ceil(cap * 0.7), pay = p.roles.reduce((s, [k]) => s + (cost[k] || 0), 0);
+  const miss = p.roles.filter(([k, , q]) => (cnt[k] || 0) < q[di]).map(([k, l, q]) => `${l} (${cnt[k] || 0}/${q[di]})`).slice(0, 3).join(', ');
+  const fb = have >= cap ? `Le pôle « ${p.name} » est complet : les dirigeants sont pleinement satisfaits.` : have >= min ? `Le pôle est bien pourvu (${have}/${cap}). À compléter : ${miss}.`
+    : `Avec ${have} membre(s) sur ${cap} postes, le pôle est sous-effectif : les dirigeants attendent au moins ${min} membres. Priorité : ${miss}.`;
+  return `<div class="panel"><h4>${p.name}</h4><div class="big">${have} / ${cap} <span class="muted" style="font-size:.8rem;font-weight:400">postes pourvus</span></div><div class="meter"><i style="width:${Math.round((have / cap) * 100)}%"></i></div>
+    ${compact ? '' : p.roles.map(([k, l, q]) => { const n = cnt[k] || 0, m = q[di]; return `<div class="stat-row"><span><span class="bd ${n >= m ? 'green' : n === 0 ? 'red' : 'amber'}">${n}/${m}</span> ${l}</span><span class="mini"><i style="width:${Math.min(100, (n / m) * 100)}%"></i></span></div>`; }).join('')}
+    <div class="stat-row"><span>Coût du pôle</span><b>${fmtEUR(pay)} / mois</b></div>
+    <div class="muted" style="margin-top:.6rem"><b>Retour du comité directeur</b></div><p class="${have >= min ? '' : 'down'}" style="margin:.2rem 0 0;font-size:.85rem">${fb}</p></div>`;
+}
+
+function bindStaffNav(c) {
+  c.onclick = (e) => {
+    const n = e.target.closest('[data-snav]'), a = e.target.closest('[data-sact]'), r = e.target.closest('[data-srow]');
+    if (n) return go('club', n.dataset.snav);
+    if (a) { const [act, key] = a.dataset.sact.split('|'); if (act === 'fire') return fireStaff(key); state.sid = key; return go('club', 'staff_detail'); }
+    if (r) { state.sid = r.dataset.srow; go('club', 'staff_detail'); }
+  };
+}
+async function fireStaff(key) {
+  if (!confirm('Licencier ce membre du staff ?')) return;
+  const [src, id] = key.split(':');
+  const { error } = src === 'scout' ? await sb.rpc('fire_scout', { p_scout: id }) : await sb.rpc('fire_staff', { p_staff: id });
+  if (error) return toast(error.message);
+  toast('Membre du staff licencié.'); state.tab === 'staff_detail' ? go('club', 'staff_all') : renderTab();
+}
+
 async function renderStaffOverview(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
-  const t = state.team, di = t.division === 'WORLD_TOUR' ? 0 : t.division === 'PRO_TEAM' ? 1 : 2;   // WorldTour / ProTeam / Continental
-  const [st, sc] = await Promise.all([sb.from('staff').select('*').eq('team_id', t.id), sb.from('scouts').select('monthly_salary').eq('team_id', t.id)]);
-  const ALIAS = { COACH: 'DS', MASSEUR: 'PHYSIO' }, cnt = { SCOUT: (sc.data || []).length }, cost = {};
-  (st.data || []).forEach((x) => { const k = ALIAS[x.role] || x.role; cnt[k] = (cnt[k] || 0) + 1; cost[k] = (cost[k] || 0) + Number(x.monthly_salary || 0); });
-  cost.SCOUT = (sc.data || []).reduce((s, x) => s + Number(x.monthly_salary || 0), 0);
-  const POLES = [
-    { name: 'Entraînement et encadrement', cap: [10, 7, 4], roles: [['HEAD_DS', 'Directeur sportif en chef', [1, 1, 1]], ['DS', 'Entraîneur / Directeur sportif', [4, 3, 1]], ['TRAINER', 'Préparateur physique', [3, 2, 1]], ['TACTICS', 'Responsable tactique / course', [2, 1, 1]]] },
-    { name: 'Recrutement', cap: [8, 5, 3], roles: [['RECRUIT_HEAD', 'Responsable du recrutement', [1, 1, 1]], ['SCOUT', 'Scout / Éclaireur', [5, 3, 1]], ['ANALYST', 'Analyste de données', [2, 1, 1]]] },
-    { name: 'Médical et performance', cap: [10, 7, 4], roles: [['DOCTOR', "Médecin d'équipe", [2, 1, 1]], ['PHYSIO', 'Kinésithérapeute / Ostéopathe', [4, 3, 1]], ['NUTRITIONIST', 'Nutritionniste', [2, 1, 1]], ['MECHANIC', 'Mécanicien chef', [2, 2, 1]]] },
-  ];
-  const card = (p) => {
-    const cap = p.cap[di], have = p.roles.reduce((s, [k, , q]) => s + Math.min(cnt[k] || 0, q[di]), 0), min = Math.ceil(cap * 0.7), pay = p.roles.reduce((s, [k]) => s + (cost[k] || 0), 0);
-    const miss = p.roles.filter(([k, , q]) => (cnt[k] || 0) < q[di]).map(([k, l, q]) => `${l} (${cnt[k] || 0}/${q[di]})`).slice(0, 3).join(', ');
-    const fb = have >= cap ? `Le pôle ${p.name.toLowerCase()} est complet : les dirigeants sont pleinement satisfaits.`
-      : have >= min ? `Le pôle est bien pourvu (${have}/${cap}). À compléter : ${miss}.`
-      : `Avec ${have} membre(s) sur ${cap} postes, le pôle est sous-effectif : les dirigeants attendent au moins ${min} membres. Priorité : ${miss}.`;
-    return `<div class="panel"><h4>${p.name}</h4><div class="big">${have} / ${cap} <span class="muted" style="font-size:.8rem;font-weight:400">postes pourvus</span></div><div class="meter"><i style="width:${Math.round((have / cap) * 100)}%"></i></div>
-      ${p.roles.map(([k, l, q]) => { const n = cnt[k] || 0, m = q[di]; return `<div class="stat-row"><span><span class="bd ${n >= m ? 'green' : n === 0 ? 'red' : 'amber'}">${n}/${m}</span> ${l}</span><span class="mini"><i style="width:${Math.min(100, (n / m) * 100)}%"></i></span></div>`; }).join('')}
-      <div class="stat-row"><span>Coût du pôle</span><b>${fmtEUR(pay)} / mois</b></div>
-      <div class="muted" style="margin-top:.6rem"><b>Retour du comité directeur</b></div><p class="${have >= min ? '' : 'down'}" style="margin:.2rem 0 0;font-size:.85rem">${fb}</p></div>`;
-  };
-  c.innerHTML = `<div class="rov">${POLES.map(card).join('')}</div>`;
+  const all = await loadStaff();
+  c.innerHTML = staffNavHTML('staff_overview') + `<div class="rov">${Object.values(STAFF_POLES).map((p) => staffPoleCard(p, all.filter((x) => p.roles.some((r) => r[0] === x.role)))).join('')}</div>`;
+  bindStaffNav(c);
+}
+
+async function renderStaffList(c, tab) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const all = await loadStaff(), p = STAFF_POLES[tab], rows = (p ? all.filter((x) => p.roles.some((r) => r[0] === x.role)) : all).sort((a, b) => b.salary - a.salary);
+  const head = p ? `<div class="rov"><div class="span3">${staffPoleCard(p, rows, true)}</div></div>`
+    : `<div class="panel"><h4>Tout le staff</h4><div class="big">${rows.length} membres</div><div class="stat-row"><span>Coût total du staff</span><b>${fmtEUR(rows.reduce((s, x) => s + x.salary, 0))} / mois</b></div></div>`;
+  const tr = (x) => `<tr data-srow="${x.key}" style="cursor:pointer"><td><span class="av">${esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''))}</span>${esc(x.name)}</td><td>${esc(STAFF_LABEL[x.role] || x.role)}</td>
+    <td>${x.nat ? flag(x.nat) : '-'}</td><td>${esc(x.type)}</td><td>${fmtEUR(x.salary)} / mois</td><td>${x.end ? '31/12/' + x.end : '-'}</td>
+    <td><button data-sact="open|${x.key}">Fiche</button> <button class="danger" data-sact="fire|${x.key}">Licencier</button></td></tr>`;
+  c.innerHTML = staffNavHTML(tab) + head + `<div class="panel full" style="margin-top:.75rem"><div class="tbl"><table class="fm sq"><thead><tr><th>Nom</th><th>Fonction / Rôle</th><th>Nationalité</th><th>Type de contrat</th><th>Salaire mensuel</th><th>Fin de contrat</th><th>Actions</th></tr></thead>
+    <tbody>${rows.map(tr).join('') || '<tr><td colspan="7" class="muted">Aucun membre du staff dans ce pôle.</td></tr>'}</tbody></table></div></div>`;
+  bindStaffNav(c);
+}
+
+async function renderStaffDetail(c) {
+  const [src, id] = String(state.sid || '').split(':');
+  const { data: x } = src ? await sb.from(src === 'scout' ? 'scouts' : 'staff').select('*').eq('id', id).maybeSingle() : { data: null };
+  if (!x) { c.innerHTML = staffNavHTML('staff_all') + '<div class="panel">Membre du staff introuvable.</div>'; return bindStaffNav(c); }
+  const sc = src === 'scout', role = sc ? 'SCOUT' : STAFF_ALIAS[x.role] || x.role, nat = sc ? x.country : x.nationality;
+  const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>`, b20 = (l, v) => `<div class="stat-row"><span>${l}</span><span><span class="mini"><i style="width:${v * 5}%"></i></span> ${v}/20</span></div>`;
+  c.innerHTML = staffNavHTML('staff_all') + `<div class="panel"><div style="display:flex;gap:1rem;align-items:center"><div class="rav">${esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''))}</div>
+    <div><div class="rname">${esc(x.name)}</div><div class="muted">${esc(STAFF_LABEL[role] || role)} · ${nat ? flag(nat) : ''}${sc ? ' · ' + x.age + ' ans' : ''}</div></div></div>
+    <div class="rcols" style="margin-top:1rem"><div class="panel"><h4>Évaluation</h4>${sc ? b20('Niveau (CA)', x.judging_current_ability) + b20('Potentiel (PA)', x.judging_potential_ability) + b20('Adaptabilité', x.adaptability)
+      : `<div class="big">${x.rating} / 100</div><div class="meter"><i style="width:${x.rating}%"></i></div>${x.specialty ? kv('Spécialité', esc(x.specialty)) : ''}`}</div>
+      <div class="panel"><h4>Contrat</h4>${kv('Type', esc(x.contract_type || 'Plein temps'))}${kv('Salaire', fmtEUR(x.monthly_salary) + ' / mois')}${kv('Fin de contrat', x.contract_end_year ? '31/12/' + x.contract_end_year : '-')}</div>
+      <div class="panel"><h4>Actions</h4><div class="rov-btns"><button data-snav="staff_all">Retour à la liste</button><button class="danger" data-sact="fire|${src}:${x.id}">Licencier</button></div></div></div></div>`;
+  bindStaffNav(c);
 }
 
 // ---------- Démarrage ----------

@@ -498,6 +498,7 @@ function bindStaffNav(c) {
     if (a) { const [act, key] = a.dataset.sact.split('|'); 
     if (act === 'fire') return fireStaff(key);
       if (act === 'hire') return hireStaff(key); state.sid = key; return go('club', 'staff_detail'); }
+      if (act === 'offer') return openStaffOffer(key);
     if (r) { state.sid = r.dataset.srow; go('club', 'staff_detail'); }
   };
 }
@@ -529,19 +530,88 @@ async function renderStaffList(c, tab) {
   bindStaffNav(c);
 }
 
-async function renderStaffDetail(c) {
-  const [src, id] = String(state.sid || '').split(':');
+const STAFF_ATTR_KEYS = [['race', 'Stratégie de course'], ['prep', 'Préparation physique'], ['recov', 'Science de la récupération'], ['talent', 'Détection de jeunes'], ['care', 'Soins / Aigu'],
+  ['adapt', 'Adaptabilité'], ['auth', 'Autorité'], ['motiv', 'Capacité à motiver'], ['stress', 'Gestion du stress'], ['nego', 'Négociation']];
+const STAFF_BIAS = { HEAD_DS: { race: 10, auth: 10, motiv: 6, nego: 6 }, DS: { race: 8, auth: 5, stress: 4 }, TRAINER: { prep: 10, motiv: 4 }, TACTICS: { race: 12, adapt: 5 },
+  RECRUIT_HEAD: { talent: 10, nego: 8 }, SCOUT: { talent: 12, adapt: 5 }, ANALYST: { talent: 6, race: 5 }, DOCTOR: { care: 12, recov: 6, stress: 5 }, PHYSIO: { recov: 10, care: 6 },
+  NUTRITIONIST: { recov: 8, prep: 5 }, MECHANIC: { stress: 5, adapt: 4 }, PRESS: { nego: 8, stress: 6 } };
+// Notes /100 : valeurs enregistrées (colonne attrs) sinon déduites de l'évaluation globale et du métier (stables d'une visite à l'autre)
+function staffAttrs(x, role) {
+  if (x.attrs && Object.keys(x.attrs).length) return x.attrs;
+  return Object.fromEntries(STAFF_ATTR_KEYS.map(([k]) => [k, Math.max(30, Math.min(99, (x.rating ?? 60) + (STAFF_BIAS[role]?.[k] || -4) + ((hashN(x.id + k) % 11) - 5)))]));
+}
+
+async function renderStaffDetail(c, staffId = state.sid) {
+  const [src, id] = String(staffId || '').split(':');
   const { data: x } = src ? await sb.from(src === 'scout' ? 'scouts' : 'staff').select('*').eq('id', id).maybeSingle() : { data: null };
   if (!x) { c.innerHTML = staffNavHTML('staff_all') + '<div class="panel">Membre du staff introuvable.</div>'; return bindStaffNav(c); }
-  const sc = src === 'scout', role = sc ? 'SCOUT' : STAFF_ALIAS[x.role] || x.role, nat = sc ? x.country : x.nationality;
-  const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>`, b20 = (l, v) => `<div class="stat-row"><span>${l}</span><span><span class="mini"><i style="width:${v * 5}%"></i></span> ${v}/20</span></div>`;
-  c.innerHTML = staffNavHTML('staff_all') + `<div class="panel"><div style="display:flex;gap:1rem;align-items:center"><div class="rav">${esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''))}</div>
-    <div><div class="rname">${esc(x.name)}</div><div class="muted">${esc(STAFF_LABEL[role] || role)} · ${nat ? flag(nat) : ''}${sc ? ' · ' + x.age + ' ans' : ''}</div></div></div>
-    <div class="rcols" style="margin-top:1rem"><div class="panel"><h4>Évaluation</h4>${sc ? b20('Niveau (CA)', x.judging_current_ability) + b20('Potentiel (PA)', x.judging_potential_ability) + b20('Adaptabilité', x.adaptability)
-      : `<div class="big">${x.rating} / 100</div><div class="meter"><i style="width:${x.rating}%"></i></div>${x.specialty ? kv('Spécialité', esc(x.specialty)) : ''}`}</div>
-      <div class="panel"><h4>Contrat</h4>${kv('Type', esc(x.contract_type || 'Plein temps'))}${kv('Salaire', fmtEUR(x.monthly_salary) + ' / mois')}${kv('Fin de contrat', x.contract_end_year ? '31/12/' + x.contract_end_year : '-')}</div>
-      <div class="panel"><h4>Actions</h4><div class="rov-btns"><button data-snav="staff_all">Retour à la liste</button>${x.team_id === state.team.id ? `<button class="danger" data-sact="fire|${src}:${x.id}">Licencier</button>` : !x.team_id ? `<button data-sact="hire|${src}:${x.id}">Embaucher</button>` : ''}</div></div></div></div>`;
+  const sc = src === 'scout', role = sc ? 'SCOUT' : STAFF_ALIAS[x.role] || x.role, nat = sc ? x.country : x.nationality, key = `${src}:${x.id}`, own = x.team_id === state.team.id;
+  const rating = sc ? Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5) : x.rating ?? 60, A = staffAttrs({ ...x, rating }, role);
+  const { data: tm } = x.team_id ? await sb.from('teams').select('name, official_name, logo_url').eq('id', x.team_id).maybeSingle() : { data: null };
+  const rep = ['Locale', 'Nationale', 'Continentale', 'Internationale', 'Légende du peloton'][rating < 55 ? 0 : rating < 65 ? 1 : rating < 75 ? 2 : rating < 85 ? 3 : 4];
+  const tone = (v) => (v >= 80 ? 'g4' : v >= 65 ? 'g3' : v >= 50 ? 'g2' : 'g1'), row = ([k, l]) => `<div class="arow"><span>${l}</span><span class="an ${tone(A[k])}">${A[k]}</span></div>`;
+  const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>;`.replace(';', '');
+  const career = [...(x.career || []).map((h) => `${h.year} : ${esc(h.role)} · ${esc(h.team)}`), ...(tm ? [`Actuellement : ${esc(STAFF_LABEL[role] || role)} · ${esc(tm.official_name || tm.name)}`] : [])];
+  const initials = esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''));
+  c.innerHTML = staffNavHTML('staff_all') + `<div class="rhead"><div class="rav">${initials}</div>
+    <div class="rid"><div class="rname">${esc(x.name)}</div><div class="muted">${esc(STAFF_LABEL[role] || role)} · ${nat ? flag(nat) : ''}${x.age ? ' · ' + x.age + ' ans' : ''}</div>
+      <div class="actmenu"><button type="button" class="actbtn" id="sabtn">Actions <span class="chev">&#9662;</span></button><div class="actlist" id="salist" hidden>
+        <button type="button" class="actitem" data-sact="offer|${key}" ${own ? 'disabled' : ''}>Proposer un contrat</button>
+        <button type="button" class="actitem" data-sact="fire|${key}" ${own ? '' : 'disabled'}>Résilier le contrat</button><hr>
+        <button type="button" class="actitem" data-snav="staff_all">Retour à la liste</button></div></div></div>
+    <div class="rteam"><img src="${esc(logoSrc(tm || { name: '?' }))}" alt=""><div><b>${esc(tm ? tm.official_name || tm.name : 'Sans contrat')}</b><div class="muted">Équipe actuelle</div></div></div>
+    <div class="rbox"><div class="muted">Contrat</div><b>${fmtEUR(x.monthly_salary || 0)} / mois</b><div class="muted">Fin : ${x.contract_end_year ? '31/12/' + x.contract_end_year : '-'}</div></div>
+    <div class="rbox"><div class="muted">Réputation</div><b>${rep}</b></div></div>
+    <div class="rcols"><div class="panel"><h4>Attributs techniques / métier</h4>${STAFF_ATTR_KEYS.slice(0, 5).map(row).join('')}</div>
+      <div class="panel"><h4>Attributs mentaux</h4>${STAFF_ATTR_KEYS.slice(5).map(row).join('')}</div>
+      <div class="panel"><h4>Infos</h4>${kv('Rôle préféré', esc(STAFF_LABEL[role] || role))}${kv('Réputation', rep)}${kv('Évaluation globale', rating + ' / 100')}${kv('Type de contrat', esc(x.contract_type || 'Plein temps'))}
+        <div class="muted" style="margin:.6rem 0 .2rem">Historique de carrière</div>${career.map((l) => `<div class="stat-row"><span>${l}</span></div>`).join('') || '<p class="muted">Aucun historique enregistré.</p>'}</div></div>`;
   bindStaffNav(c);
+  const base = c.onclick;
+  c.onclick = (e) => {
+    const ab = e.target.closest('#sabtn');
+    if (ab) { e.stopPropagation(); $('salist').hidden = !$('salist').hidden; return; }
+    if (e.target.closest('#salist [data-sact],#salist [data-snav]')) $('salist').hidden = true;
+    base(e);
+  };
+  if (!window.actBound) {
+    window.actBound = true;
+    document.addEventListener('click', (e) => { if (!e.target.closest('.actmenu')) document.querySelectorAll('.actlist').forEach((l) => (l.hidden = true)); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') document.querySelectorAll('.actlist').forEach((l) => (l.hidden = true)); });
+  }
+}
+
+async function openStaffOffer(key) {
+  const [src, id] = key.split(':'), tid = state.team.id;
+  const { data: x } = await sb.from(src === 'scout' ? 'scouts' : 'staff').select('*').eq('id', id).maybeSingle();
+  if (!x) return toast('Membre du staff introuvable.');
+  const sc = src === 'scout', role = sc ? 'SCOUT' : STAFF_ALIAS[x.role] || x.role, demand = Number(x.monthly_salary || 0), free = !x.team_id;
+  const [a, b] = await Promise.all([sb.from('staff').select('id', { count: 'exact', head: true }).eq('team_id', tid), sb.from('scouts').select('id', { count: 'exact', head: true }).eq('team_id', tid)]);
+  const used = (a.count || 0) + (b.count || 0), cap = [28, 19, 11][staffDiv()], roles = Object.keys(STAFF_LABEL).filter((k) => k !== 'SCOUT');
+  const ov = document.createElement('div'); ov.className = 'adm-ov'; ov.id = 'so-modal';
+  ov.innerHTML = `<div class="adm-box" style="max-width:560px"><div class="neg-head"><h3 style="margin:0">Proposer un contrat : ${esc(x.name)}</h3><button class="link" id="so-x">Fermer</button></div>
+    <div class="muted">${free ? 'Sans contrat : embauche directe' : 'Sous contrat : l\'offre sera envoyée à son club'} · exigence salariale : ${fmtEUR(demand)} / mois · effectif du staff : ${used} / ${cap}</div>
+    <div class="adm-grid" style="margin-top:.8rem"><div><label>Rôle proposé</label>${sc ? '<select id="so-role" disabled><option>Scout / Éclaireur</option></select>' : selHtml('so-role', roles.map((k) => [k, STAFF_LABEL[k]]), role)}</div>
+      <div><label>Salaire mensuel (€)</label><input id="so-salary" type="number" min="0" step="100" value="${demand}" ${sc ? 'disabled' : ''}></div>
+      <div><label>Durée du contrat</label>${selHtml('so-years', [[1, '1 an'], [2, '2 ans'], [3, '3 ans']], 2)}</div></div>
+    ${sc ? '<p class="muted">Les recruteurs sont embauchés aux conditions affichées.</p>' : ''}
+    <div class="neg-hint" id="so-err" style="color:#f87171"></div><div class="neg-actions"><button class="link" id="so-x2">Annuler</button><button id="so-send">${free ? 'Embaucher' : 'Envoyer l\'offre'}</button></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove(); $('so-x').onclick = $('so-x2').onclick = close; ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  $('so-send').onclick = async () => {
+    const salary = +$('so-salary').value, years = +$('so-years').value, r = $('so-role').value, err = (m) => { $('so-err').textContent = m; };
+    if (!sc && !(salary > 0)) return err('Proposez un salaire mensuel.');
+    if (free && !sc && salary < demand * 0.9) return err(`Salaire trop bas : ce candidat exige au moins ${fmtEUR(Math.ceil(demand * 0.9))} / mois.`);
+    if (free && used >= cap) return err('Effectif du staff complet.');
+    $('so-send').disabled = true;
+    let res;
+    if (sc) res = await sb.rpc('hire_scout', { p_scout: id });
+    else if (free) res = await sb.rpc('hire_staff_contract', { p_staff: id, p_role: r, p_salary: salary, p_years: years });
+    else res = await sb.from('staff_offers').insert({ staff_id: id, from_team_id: tid, to_team_id: x.team_id, role: r, monthly_salary: salary, years, status: 'PENDING' });
+    if (res.error) { $('so-send').disabled = false; return err(res.error.message); }
+    toast(free ? `${x.name} rejoint votre staff.` : 'Offre envoyée au club de ce membre du staff.'); close();
+    state.tab === 'staff_detail' ? renderStaffDetail($('content'), key) : renderTab();
+  };
 }
 
 async function hireStaff(key) {

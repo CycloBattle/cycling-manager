@@ -203,8 +203,7 @@ const MENUS = {
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
   recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['recruiters', 'Staff de recrutement'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
-  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['ranking', 'Classement UCI']] },
-};
+  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['staff_db', 'Base de données staff'], ['ranking', 'Classement UCI']] },};
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
 const store = {
@@ -257,7 +256,7 @@ function viewGame() {
         </div>
       </div>
       <div class="fm-row2">
-        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab || (k === 'staff_overview' && state.tab.startsWith('staff_')) ? 'on' : ''}">${l}</button>`).join('')}</nav>
+        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab || (k === 'staff_overview' && state.tab.startsWith('staff_') && state.tab !== 'staff_db') ? 'on' : ''}">${l}</button>`).join('')}</nav>
         <nav class="fm-quick">${quick.map(([k, l]) => `<button data-go="${k}">${l}</button>`).join('')}</nav>
       </div>
     </header>
@@ -281,6 +280,7 @@ async function renderTab() {
   if (tab === 'missions') return renderMissions(c);
   if (tab === 'staff_overview') return renderStaffOverview(c);
   if (tab === 'staff_detail') return renderStaffDetail(c);
+  if (tab === 'staff_db') return renderStaffDatabase(c);
   if (tab.startsWith('staff_')) return renderStaffList(c, tab);
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
@@ -495,7 +495,9 @@ function bindStaffNav(c) {
   c.onclick = (e) => {
     const n = e.target.closest('[data-snav]'), a = e.target.closest('[data-sact]'), r = e.target.closest('[data-srow]');
     if (n) return go('club', n.dataset.snav);
-    if (a) { const [act, key] = a.dataset.sact.split('|'); if (act === 'fire') return fireStaff(key); state.sid = key; return go('club', 'staff_detail'); }
+    if (a) { const [act, key] = a.dataset.sact.split('|'); 
+    if (act === 'fire') return fireStaff(key);
+      if (act === 'hire') return hireStaff(key); state.sid = key; return go('club', 'staff_detail'); }
     if (r) { state.sid = r.dataset.srow; go('club', 'staff_detail'); }
   };
 }
@@ -538,8 +540,52 @@ async function renderStaffDetail(c) {
     <div class="rcols" style="margin-top:1rem"><div class="panel"><h4>Évaluation</h4>${sc ? b20('Niveau (CA)', x.judging_current_ability) + b20('Potentiel (PA)', x.judging_potential_ability) + b20('Adaptabilité', x.adaptability)
       : `<div class="big">${x.rating} / 100</div><div class="meter"><i style="width:${x.rating}%"></i></div>${x.specialty ? kv('Spécialité', esc(x.specialty)) : ''}`}</div>
       <div class="panel"><h4>Contrat</h4>${kv('Type', esc(x.contract_type || 'Plein temps'))}${kv('Salaire', fmtEUR(x.monthly_salary) + ' / mois')}${kv('Fin de contrat', x.contract_end_year ? '31/12/' + x.contract_end_year : '-')}</div>
-      <div class="panel"><h4>Actions</h4><div class="rov-btns"><button data-snav="staff_all">Retour à la liste</button><button class="danger" data-sact="fire|${src}:${x.id}">Licencier</button></div></div></div></div>`;
+      <div class="panel"><h4>Actions</h4><div class="rov-btns"><button data-snav="staff_all">Retour à la liste</button>${x.team_id === state.team.id ? `<button class="danger" data-sact="fire|${src}:${x.id}">Licencier</button>` : !x.team_id ? `<button data-sact="hire|${src}:${x.id}">Embaucher</button>` : ''}</div></div></div></div>`;
   bindStaffNav(c);
+}
+
+async function hireStaff(key) {
+  const [src, id] = key.split(':');
+  const { error } = src === 'scout' ? await sb.rpc('hire_scout', { p_scout: id }) : await sb.rpc('hire_staff', { p_staff: id });
+  if (error) return toast(error.message);
+  toast('Membre du staff embauché.'); renderTab();
+}
+
+const sdb = { q: '', role: 'all', status: 'all', sort: { k: 'rating', d: -1 } };
+async function renderStaffDatabase(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const [st, sc, tm] = await Promise.all([sb.from('staff').select('*'), sb.from('scouts').select('*'), sb.from('teams').select('id, name, official_name')]);
+  const tn = Object.fromEntries((tm.data || []).map((t) => [t.id, t.official_name || t.name]));
+  const all = [
+    ...(st.data || []).map((x) => ({ key: 'staff:' + x.id, name: x.name, role: STAFF_ALIAS[x.role] || x.role, team_id: x.team_id, age: x.age, nat: x.nationality, rating: x.rating, salary: Number(x.monthly_salary || 0) })),
+    ...(sc.data || []).map((x) => ({ key: 'scout:' + x.id, name: x.name, role: 'SCOUT', team_id: x.team_id, age: x.age, nat: x.country, rating: Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5), salary: Number(x.monthly_salary || 0) })),
+  ].map((x) => ({ ...x, team: x.team_id ? tn[x.team_id] || '-' : 'Sans contrat' }));
+  c.innerHTML = `<div class="panel full"><h4>Base de données staff</h4><div class="fbar">
+    <input id="s-q" placeholder="Nom" value="${esc(sdb.q)}">
+    ${selHtml('s-role', [['all', 'Tous les rôles'], ...Object.entries(STAFF_LABEL)], sdb.role)}
+    ${selHtml('s-status', [['all', 'Tous les statuts'], ['free', 'Sans contrat / libres'], ['signed', 'Sous contrat']], sdb.status)}</div>
+    <div id="sdbtable"></div><p class="muted">Évaluation sur 100 (pour un scout : moyenne CA, PA et adaptabilité). L'exigence salariale correspond au salaire mensuel actuel.</p></div>`;
+  const row = (x) => `<tr data-srow="${x.key}" style="cursor:pointer"><td><span class="av">${esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''))}</span>${esc(x.name)}</td><td>${esc(STAFF_LABEL[x.role] || x.role)}</td>
+    <td>${x.team_id ? esc(x.team) : '<span class="bd green">Sans contrat</span>'}</td><td>${x.age ?? '-'}</td><td>${x.nat ? flag(x.nat) : '-'}</td>
+    <td>${x.rating != null ? `<span class="mini"><i style="width:${x.rating}%"></i></span> ${x.rating}` : '-'}</td><td>${fmtEUR(x.salary)} / mois</td><td><button data-sact="open|${x.key}">Consulter</button></td></tr>`;
+  const draw = () => {
+    const q = sdb.q.toLowerCase(), { k, d } = sdb.sort;
+    const rows = all.filter((x) => (!q || x.name.toLowerCase().includes(q)) && (sdb.role === 'all' || x.role === sdb.role) && (sdb.status === 'all' || (sdb.status === 'free' ? !x.team_id : !!x.team_id)));
+    rows.sort((a, b) => { const va = k === 'role' ? STAFF_LABEL[a.role] || a.role : a[k], vb = k === 'role' ? STAFF_LABEL[b.role] || b.role : b[k];
+      return (['name', 'role', 'team', 'nat'].includes(k) ? String(va ?? '').localeCompare(String(vb ?? ''), 'fr') : (va ?? -1) - (vb ?? -1)) * d; });
+    const cols = [['Nom', 'name'], ['Rôle principal', 'role'], ['Équipe actuelle', 'team'], ['Âge', 'age'], ['Nationalité', 'nat'], ['Évaluation globale', 'rating'], ['Exigence salariale', 'salary'], ['', '']];
+    $('sdbtable').innerHTML = `<div class="muted">${rows.length} membre(s)${rows.length > 100 ? ' (100 premiers affichés)' : ''}</div><div class="tbl tall"><table class="fm sq"><thead><tr>${cols.map(([l, key]) => `<th ${key ? `data-ssort="${key}"` : ''}>${l}${key === k ? (d < 0 ? ' ▼' : ' ▲') : ''}</th>`).join('')}</tr></thead>
+      <tbody>${rows.slice(0, 100).map(row).join('') || '<tr><td colspan="8" class="muted">Aucun membre du staff ne correspond.</td></tr>'}</tbody></table></div>`;
+  };
+  c.querySelectorAll('.fbar [id^="s-"]').forEach((el) => { el.oninput = () => { sdb[{ 's-q': 'q', 's-role': 'role', 's-status': 'status' }[el.id]] = el.value; draw(); }; });
+  bindStaffNav(c);
+  const base = c.onclick;
+  c.onclick = (e) => {
+    const th = e.target.closest('th[data-ssort]');
+    if (th) { const key = th.dataset.ssort; sdb.sort = sdb.sort.k === key ? { k: key, d: -sdb.sort.d } : { k: key, d: ['name', 'role', 'team', 'nat'].includes(key) ? 1 : -1 }; return draw(); }
+    base(e);
+  };
+  draw();
 }
 
 // ---------- Démarrage ----------

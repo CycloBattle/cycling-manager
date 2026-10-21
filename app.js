@@ -52,6 +52,7 @@ async function route() {
   const { data: p } = await sb.from('profiles').select('is_admin').eq('user_id', state.user.id).maybeSingle();
   state.isAdmin = !!p?.is_admin;
   await loadGame();
+  await loadStaffImpactCtx(state.team.id);
   viewGame();
 }
 
@@ -555,7 +556,7 @@ async function renderStaffDetail(c, staffId = state.sid) {
   const wantRole = sc ? 'SCOUT' : x.wanted_role || WANT[role]?.[0] || role, langs = (sc ? [] : x.languages || []).length ? x.languages : ['Anglais', ...(nat ? [({ FR: 'Français', IT: 'Italien', ES: 'Espagnol', DE: 'Allemand', NL: 'Néerlandais', BE: 'Français', PT: 'Portugais', DK: 'Danois' })[nat]].filter(Boolean) : [])];
   const rep = ['Locale', 'Nationale', 'Continentale', 'Internationale', 'Légende du peloton'][rating < 55 ? 0 : rating < 65 ? 1 : rating < 75 ? 2 : rating < 85 ? 3 : 4];
   const tone = (v) => (v >= 80 ? 'g4' : v >= 65 ? 'g3' : v >= 50 ? 'g2' : 'g1'), row = ([k, l]) => `<div class="arow"><span>${l}</span><span class="an ${tone(A[k])}">${A[k]}</span></div>`;
-  const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>;`.replace(';', '');
+  const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>`;
   const career = [...(x.career || []).map((h) => `${h.year} : ${esc(h.role)} · ${esc(h.team)}`), ...(tm ? [`Actuellement : ${esc(STAFF_LABEL[role] || role)} · ${esc(tm.official_name || tm.name)}`] : [])];
   const initials = esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''));
   c.innerHTML = staffNavHTML('staff_all') + `<div class="rhead"><div class="rav">${initials}</div>
@@ -664,7 +665,69 @@ async function renderStaffDatabase(c) {
   };
   draw();
 }
+/* ===== Moteur d'impact du staff et des langues ===== */
+const SI_LANG_CODE = { Français: 'FR', Anglais: 'EN', Italien: 'IT', Espagnol: 'ES', Allemand: 'DE', Néerlandais: 'NL', Danois: 'DA', Portugais: 'PT', Norvégien: 'NO', Suédois: 'SV' };
+const SI_NATIVE = { FR: 'FR', BE: 'FR', LU: 'FR', IT: 'IT', ES: 'ES', PT: 'PT', DE: 'DE', AT: 'DE', CH: 'DE', NL: 'NL', DK: 'DA', NO: 'NO', SE: 'SV', GB: 'EN', IE: 'EN', US: 'EN', CA: 'EN', AU: 'EN', NZ: 'EN' };
+const SI_EN = { NL: 1, DK: 1, NO: 1, SE: 1, DE: 0.9, AT: 0.85, BE: 0.8, CH: 0.8, SI: 0.8, PL: 0.6, CZ: 0.6, FR: 0.5, PT: 0.5, IT: 0.45, ES: 0.45 };   // part de coureurs parlant anglais (hors colonne languages)
+const SI_COACH = ['HEAD_DS', 'DS', 'TRAINER', 'TACTICS'];
+const SI_GROUPS = { recov: ['PHYSIO', 'DOCTOR', 'NUTRITIONIST', 'TRAINER'], talent: ['SCOUT', 'RECRUIT_HEAD', 'ANALYST'], motiv: ['TRAINER', 'DS', 'HEAD_DS'], race: ['HEAD_DS', 'DS', 'TACTICS'] };
+const SI_CTX = {};   // contexte calculé par équipe : SI_CTX[teamId]
+const siLang = (l) => SI_LANG_CODE[l] || String(l).toUpperCase();
+const siClamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// Langues d'un coureur ou d'un membre du staff : liste enregistrée (codes ou noms), sinon langue maternelle du pays + anglais selon le pays
+function siLangs(p) {
+  if (Array.isArray(p.languages) && p.languages.length) return [...new Set(p.languages.map(siLang))];
+  const nat = p.nationality || p.country || '', native = SI_NATIVE[nat] || nat, out = [native];
+  if (native !== 'EN' && (hashN(String(p.id) + 'en') % 100) / 100 < (SI_EN[nat] ?? 0.55)) out.push('EN');
+  return out;
+}
+
+// À appeler avant chaque simulation / passage de jour : charge le staff, les langues et calcule les bonus de l'équipe
+async function loadStaffImpactCtx(teamId) {
+  const ids = [teamId, ...(state.devTeam && state.team && teamId === state.team.id ? [state.devTeam.id] : [])];
+  const [st, sc, rs] = await Promise.all([
+    sb.from('staff').select('*').eq('team_id', teamId),
+    sb.from('scouts').select('*').eq('team_id', teamId),
+    sb.from('riders').select('*').in('team_id', ids),
+  ]);
+  const members = [
+    ...(st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { role, langs: siLangs(x), A: staffAttrs(x, role) }; }),
+    ...(sc.data || []).map((x) => ({ role: 'SCOUT', langs: siLangs(x), A: staffAttrs({ id: x.id, rating: Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5) }, 'SCOUT') })),
+  ];
+  const count = {};
+  [...(rs.data || []).map((r) => siLangs(r)), ...members.map((m) => m.langs)].forEach((l) => l.forEach((k) => (count[k] = (count[k] || 0) + 1)));
+  const major = Object.entries(count).sort((a, b) => b[1] - a[1])[0]?.[0] || 'EN';                     // langue majoritaire de l'équipe
+  const top = (roles, key, n = 2) => {                                                                    // moyenne des 2 meilleures notes du pôle (40 si pôle vide)
+    const v = members.filter((m) => roles.includes(m.role)).map((m) => m.A[key]).sort((a, b) => b - a).slice(0, n);
+    return v.length ? v.reduce((s, x) => s + x, 0) / v.length : 40;
+  };
+  const R = (top(SI_GROUPS.recov, 'recov') + top(SI_GROUPS.recov, 'prep')) / 200, Y = (top(SI_GROUPS.talent, 'talent') + top(SI_GROUPS.motiv, 'motiv')) / 200, S = top(SI_GROUPS.race, 'race') / 100;
+  SI_CTX[teamId] = {
+    workLangs: [...new Set(['EN', major])], coachLangs: new Set(members.filter((m) => SI_COACH.includes(m.role)).flatMap((m) => m.langs)),
+    fatigueRec: 1 - siClamp((R - 0.5) * 0.4, 0, 0.2),      // jusqu'à -20 % de fatigue accumulée (préparation physique + récupération)
+    recoveryMult: 1 + siClamp((R - 0.5) * 0.6, 0, 0.3),    // jusqu'à +30 % de vitesse de récupération de forme
+    youthMult: 1 + siClamp((Y - 0.5) * 0.8, 0, 0.4),       // jusqu'à +40 % de progression des U23 (détection de jeunes + motivation)
+    raceBonus: 1 + siClamp((S - 0.5) * 0.1, 0, 0.05),      // jusqu'à +5 % de performance en course (stratégie des directeurs sportifs)
+    scores: { R, Y, S }, at: Date.now(),
+  };
+  return SI_CTX[teamId];
+}
+
+// rider : { id, nationality, age, languages? } → multiplicateurs à appliquer par le moteur de jeu
+//   fatigue accumulée × fatigueMult · récupération de forme × recoveryMult · progression × progressMult · SPV de course × raceBonus
+function calculateStaffImpact(teamId, rider, ctx = SI_CTX[teamId]) {
+  if (!ctx) return { language: { speaks: true, covered: false, penalized: false, workLangs: ['EN'], trainingMult: 1, fatigueMult: 1 }, fatigueMult: 1, recoveryMult: 1, trainingMult: 1, youthMult: 1, progressMult: 1, raceBonus: 1, notes: ['Contexte du staff non chargé : appelez loadStaffImpactCtx(teamId).'] };
+  const langs = siLangs(rider), speaks = langs.some((l) => ctx.workLangs.includes(l)), covered = langs.some((l) => ctx.coachLangs.has(l)), penalized = !speaks && !covered;
+  const language = { langs, speaks, covered, penalized, workLangs: ctx.workLangs, trainingMult: penalized ? 0.85 : 1, fatigueMult: penalized ? 1.1 : 1 };
+  const youthMult = rider.age <= 22 ? ctx.youthMult : 1, notes = [];
+  if (penalized) notes.push("Barrière de la langue : -15 % d'efficacité d'entraînement, +10 % de fatigue (aucun encadrant ne parle sa langue).");
+  else if (!speaks) notes.push('Barrière de la langue compensée : un encadrant parle sa langue.');
+  if (ctx.fatigueRec < 1) notes.push(`Staff de récupération : fatigue -${Math.round((1 - ctx.fatigueRec) * 100)} %, récupération +${Math.round((ctx.recoveryMult - 1) * 100)} %.`);
+  if (youthMult > 1) notes.push(`Détection et motivation : progression des jeunes +${Math.round((youthMult - 1) * 100)} %.`);
+  if (ctx.raceBonus > 1) notes.push(`Stratégie de course : +${((ctx.raceBonus - 1) * 100).toFixed(1)} % de performance.`);
+  return { language, fatigueMult: language.fatigueMult * ctx.fatigueRec, recoveryMult: ctx.recoveryMult, trainingMult: language.trainingMult, youthMult, progressMult: language.trainingMult * youthMult, raceBonus: ctx.raceBonus, notes };
+}
 // ---------- Démarrage ----------
 (async function boot() {
   const { data: { session } } = await sb.auth.getSession();

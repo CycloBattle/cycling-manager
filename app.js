@@ -495,10 +495,13 @@ function bindStaffNav(c) {
   c.onclick = (e) => {
     const n = e.target.closest('[data-snav]'), a = e.target.closest('[data-sact]'), r = e.target.closest('[data-srow]');
     if (n) return go('club', n.dataset.snav);
-    if (a) { const [act, key] = a.dataset.sact.split('|'); 
-    if (act === 'fire') return fireStaff(key);
-      if (act === 'hire') return hireStaff(key); state.sid = key; return go('club', 'staff_detail'); }
-          if (act === 'offer') return renderStaffContractModal(key);
+    if (a) {
+      const [act, key] = a.dataset.sact.split('|');
+      if (act === 'fire') return fireStaff(key);
+      if (act === 'hire') return hireStaff(key);
+      if (act === 'offer') return renderStaffContractModal(key);
+      state.sid = key; return go('club', 'staff_detail');
+    }
     if (r) { state.sid = r.dataset.srow; go('club', 'staff_detail'); }
   };
 }

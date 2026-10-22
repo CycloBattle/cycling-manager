@@ -227,7 +227,17 @@ table.sq button[data-obs] { padding:.2rem .6rem; font-size:.75rem; }
 .staffnav { margin-bottom:.75rem; } .staffnav button { font-size:.9rem; padding:.4rem .9rem; }
 
 .rav-wrap { position:relative; display:inline-block; width:84px; height:84px; flex:none; }
-.avatar-img { width:84px; height:84px; border-radius:50%; object-fit:cover; background:#4c1d95; display:block; }
+
+.avatar-img { 
+  width:84px; 
+  height:84px; 
+  border-radius:50%; 
+  object-fit:cover; 
+  object-position: top center; /* <-- AJOUTÉ : Cadrage automatique centré sur le visage/buste */
+  background:#4c1d95; 
+  display:block; 
+}
+
 .rav-edit { position:absolute; left:0; right:0; bottom:0; height:34%; border-radius:0 0 50% 50%; background:rgba(11,16,32,.85); color:#fff; font-size:.6rem; font-weight:600; padding:0; opacity:0; transition:opacity .15s; }
 .rav-wrap:hover .rav-edit { opacity:1; }
 @media (hover:none) { .rav-edit { opacity:1; } }

@@ -195,14 +195,14 @@ async function viewTeam() {
 }
 
 // ---------- Écran 4 : jeu (disposition type Football Manager) ----------
-Object.assign(state, { menu: 'portal', tab: 'portal', hist: [['portal', 'portal']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '', devTeam: null });
+Object.assign(state, { menu: 'portal', tab: 'overview', hist: [['portal', 'overview']], hpos: 0, game: null, nextRace: null, mfilter: 'all', q: '', devTeam: null });
 const myTeamIds = () => [state.team?.id, state.devTeam?.id].filter(Boolean);
 const PROFILES = { FLAT: 'Plat', MOUNTAIN: 'Montagne', HILLS: 'Vallonné', COBBLES: 'Pavés', TIME_TRIAL: 'Contre-la-montre' };
 const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
-  portal: { label: 'PORTAIL', subs: [['portal', 'Portail'], ['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
+  portal: { label: 'PORTAIL', subs: [['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
-  recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['recruiters', 'Staff de recrutement'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
+  recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
   club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['staff_db', 'Base de données staff'], ['ranking', 'Classement UCI']] },};
 const gd = (iso) => new Date(iso + 'T12:00:00');
@@ -446,7 +446,7 @@ async function renderClubOverview(c) {
       ${kv('Revenus sponsors / mois', fmtEUR(income))}${kv('Dépenses / mois', fmtEUR(expenses))}${kv('Solde mensuel', fmtEUR(balance), balance >= 0 ? 'up' : 'down')}
       <div class="muted" style="margin-top:.5rem">Masse salariale des coureurs : ${fmtEUR(payroll)} (${pct} % des revenus)</div><div class="meter"><i style="width:${pct}%"></i></div></div>
     <div class="panel"><h4>Staff</h4>${sRows.map(([l, n, max]) => `<div class="stat-row"><div>${l}<small>${n >= max ? 'Complet' : max - n + ' poste(s) vacant(s)'}</small></div><b>${n} / ${max}</b></div>`).join('')}
-      ${kv('Coût du staff / mois', fmtEUR(staffCost))}<div class="rov-btns"><button data-cgo="recruit|recruiters">Staff de recrutement</button></div></div>
+      ${kv('Coût du staff / mois', fmtEUR(staffCost))}<div class="rov-btns"><button data-cgo="club|staff_scouting">Staff de recrutement</button></div></div>
     <div class="panel"><h4>Sponsors</h4>${(sp.data || []).map((x) => `<div class="stat-row"><span>${esc(x.sponsors_catalog?.name || 'Sponsor')}</span><b>${fmtEUR(x.monthly_payout)} / mois</b></div>`).join('') || '<p class="muted">Aucun sponsor signé.</p>'}
       <div class="rov-btns"><button data-cgo="finance|contracts">Sponsors & Finances</button></div></div>
     <div class="panel"><h4>Infrastructures</h4>${INF.map(([k, l]) => `<div class="stat-row"><span>${l}</span><span class="bd ${lvl(k) ? 'green' : 'spec'}">${lvl(k) ? 'Niv. ' + lvl(k) + ' / 5' : 'Non construit'}</span></div>`).join('')}
@@ -559,7 +559,7 @@ async function renderStaffDetail(c, staffId = state.sid) {
   const kv = (l, v) => `<div class="stat-row"><span>${l}</span><b>${v}</b></div>`;
   const career = [...(x.career || []).map((h) => `${h.year} : ${esc(h.role)} · ${esc(h.team)}`), ...(tm ? [`Actuellement : ${esc(STAFF_LABEL[role] || role)} · ${esc(tm.official_name || tm.name)}`] : [])];
   const initials = esc(x.name.split(' ').map((s) => s[0]).slice(0, 2).join(''));
-  c.innerHTML = staffNavHTML('staff_all') + `<div class="rhead"><div class="rav">${initials}</div>
+  c.innerHTML = staffNavHTML('staff_all') + `<div class="rhead">${avatarWithEdit(x, sc ? 'scout' : 'staff')}
     <div class="rid"><div class="rname">${esc(x.name)}</div><div class="muted">${esc(STAFF_LABEL[role] || role)} · ${nat ? flag(nat) : ''}${x.age ? ' · ' + x.age + ' ans' : ''}</div>
       <div class="actmenu"><button type="button" class="actbtn" id="sabtn">Actions <span class="chev">&#9662;</span></button><div class="actlist" id="salist" hidden>
         <button type="button" class="actitem" data-sact="offer|${key}" ${own ? 'disabled' : ''}>Signer le contrat</button>
@@ -728,6 +728,31 @@ function calculateStaffImpact(teamId, rider, ctx = SI_CTX[teamId]) {
   if (ctx.raceBonus > 1) notes.push(`Stratégie de course : +${((ctx.raceBonus - 1) * 100).toFixed(1)} % de performance.`);
   return { language, fatigueMult: language.fatigueMult * ctx.fatigueRec, recoveryMult: ctx.recoveryMult, trainingMult: language.trainingMult, youthMult, progressMult: language.trainingMult * youthMult, raceBonus: ctx.raceBonus, notes };
 }
+
+/* ===== Photos de coureurs et de staff ===== */
+const initialsOf = (p) => esc((p.first_name ? p.first_name[0] + (p.last_name || '')[0] : String(p.name || '?').split(' ').map((s) => s[0]).slice(0, 2).join('')).toUpperCase());
+function getPersonAvatar(person, type = 'rider') {
+  const url = person.photo_url || person.avatar, fallback = `<div class="rav">${initialsOf(person)}</div>`;
+  if (!url || !/^https?:\/\//i.test(url)) return fallback;
+  return `<img src="${esc(url)}" class="avatar-img" alt="" referrerpolicy="no-referrer" data-fb="${esc(fallback)}" onerror="this.outerHTML=this.dataset.fb">`;
+}
+const avatarWithEdit = (person, type) => `<div class="rav-wrap">${getPersonAvatar(person, type)}<button type="button" class="rav-edit" data-photo="${type}|${person.id}" title="Éditer la photo">Éditer photo</button></div>`;
+async function editPersonPhoto(type, id) {
+  const table = { rider: 'riders', staff: 'staff', scout: 'scouts' }[type]; if (!table) return;
+  const { data } = await sb.from(table).select('photo_url').eq('id', id).maybeSingle();
+  const url = prompt("Collez l'URL d'une image (lien direct .png ou .jpg). Laissez vide pour retirer la photo.", data?.photo_url || '');
+  if (url === null) return;
+  const clean = url.trim();
+  if (clean && !/^https?:\/\/\S+$/i.test(clean)) return toast('URL invalide : elle doit commencer par http:// ou https://');
+  const { error } = await sb.rpc('set_person_photo', { p_kind: type, p_id: id, p_url: clean });
+  if (error) return toast(error.message);
+  toast(clean ? 'Photo enregistrée.' : 'Photo retirée.'); renderTab();
+}
+if (!window.photoBound) {
+  window.photoBound = true;
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-photo]'); if (b) { const [t, id] = b.dataset.photo.split('|'); editPersonPhoto(t, id); } });
+}
+
 // ---------- Démarrage ----------
 (async function boot() {
   const { data: { session } } = await sb.auth.getSession();

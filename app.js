@@ -202,7 +202,7 @@ const DAYS = ['DIM', 'LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM'];
 const MENUS = {
   portal: { label: 'PORTAIL', subs: [['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
-  recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['training', 'Planning']] },
+  recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['overview', "Vue d'ensemble"], ['individual', 'Entraînement individuel'], ['intensity', 'Intensité & Repos'], ['assignments', 'Affectation du staff']] },
   finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
   club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['staff_db', 'Base de données staff'], ['ranking', 'Classement UCI']] },};
 const gd = (iso) => new Date(iso + 'T12:00:00');
@@ -283,6 +283,7 @@ async function renderTab() {
   if (tab === 'staff_detail') return renderStaffDetail(c);
   if (tab === 'staff_db') return renderStaffDatabase(c);
   if (tab.startsWith('staff_')) return renderStaffList(c, tab);
+  if (tab === 'overview' && state.menu === 'training') return renderTrainingOverview(c);
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
@@ -751,6 +752,96 @@ async function editPersonPhoto(type, id) {
 if (!window.photoBound) {
   window.photoBound = true;
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-photo]'); if (b) { const [t, id] = b.dataset.photo.split('|'); editPersonPhoto(t, id); } });
+}
+
+/* ===== ENTRAÎNEMENT : vue d'ensemble et planning hebdomadaire ===== */
+const TRN_SLOTS = [
+  ['Matin', [['Endurance fondamentale', 'build'], ['PMA / Bosses', 'hard'], ['Contre-la-montre', 'hard'], ['Sprint & train', 'hard'], ['Repos', 'rest']]],
+  ['Après-midi', [['Musculation / Gainage', 'build'], ['Tactique de course', 'tact'], ['Reconnaissance', 'tact'], ['Récupération active', 'rec'], ['Repos', 'rest']]],
+  ['Soir', [['Soins & physiothérapie', 'rec'], ['Repos', 'rest']]],
+];
+const TRN_PATTERN = { 1: ['Endurance fondamentale', 'Musculation / Gainage', 'Soins & physiothérapie'], 2: ['PMA / Bosses', 'Tactique de course', 'Soins & physiothérapie'],
+  3: ['Sprint & train', 'Récupération active', 'Soins & physiothérapie'], 4: ['Contre-la-montre', 'Musculation / Gainage', 'Soins & physiothérapie'],
+  5: ['Endurance fondamentale', 'Reconnaissance', 'Soins & physiothérapie'], 6: ['PMA / Bosses', 'Récupération active', 'Soins & physiothérapie'], 0: ['Repos', 'Repos', 'Repos'] };
+const trnIso = (d) => d.toISOString().slice(0, 10);
+const trnAdd = (iso, n) => { const d = gd(iso); d.setDate(d.getDate() + n); return trnIso(d); };
+const trnMonday = (iso) => trnAdd(iso, -((gd(iso).getDay() + 6) % 7));
+
+// Jours bloqués : course (tous les créneaux) + voyage la veille et le lendemain si la course est à plus de 300 km du siège
+function trnLocked(races) {
+  const m = {}, put = (iso, o) => { if (!m[iso] || o.type === 'RACE') m[iso] = o; };
+  races.forEach((r) => {
+    put(r.date, { type: 'RACE', label: r.name });
+    if ((r.travel_km || 0) > 300) { put(trnAdd(r.date, -1), { type: 'TRAVEL', label: `Voyage : ${r.name} (${r.travel_km} km)` }); put(trnAdd(r.date, 1), { type: 'TRAVEL', label: `Retour : ${r.name}` }); }
+  });
+  return m;
+}
+// Planning proposé par le Directeur sportif (mode délégué et bouton « Planning automatique »)
+function trnAuto(iso, races) {
+  const next = races.filter((r) => r.date > iso)[0], prev = races.filter((r) => r.date < iso).slice(-1)[0];
+  const dn = next ? Math.round((gd(next.date) - gd(iso)) / 864e5) : 99, dp = prev ? Math.round((gd(iso) - gd(prev.date)) / 864e5) : 99;
+  if (dp === 1) return ['Repos', 'Récupération active', 'Soins & physiothérapie'];
+  if (dn === 1) return ['Endurance fondamentale', 'Tactique de course', 'Soins & physiothérapie'];
+  return TRN_PATTERN[gd(iso).getDay()];
+}
+
+async function renderTrainingOverview(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game;
+  const [rc, sch, set] = await Promise.all([
+    sb.from('races').select('*').order('date'),
+    sb.from('training_schedule').select('day, slots').eq('team_id', t.id),
+    sb.from('training_settings').select('delegated').eq('team_id', t.id).maybeSingle(),
+  ]);
+  if (sch.error) { c.innerHTML = `<div class="panel"><h4>Entraînement</h4><p class="err">${esc(sch.error.message)} : lancez le script SQL de l'entraînement dans Supabase.</p></div>`; return; }
+  const races = rc.data || [], locked = trnLocked(races), nr = state.nextRace, away = nr && (nr.travel_km || 0) > 300;
+  state.trainingSchedule = Object.fromEntries((sch.data || []).map((x) => [x.day, x.slots])); state.trnDelegated = !!set.data?.delegated; state.trnWeek = state.trnWeek || trnMonday(g.game_date);
+  const weekDays = () => [...Array(7)].map((_, i) => trnAdd(state.trnWeek, i)), slotsOf = (iso) => (state.trnDelegated ? trnAuto(iso, races) : state.trainingSchedule[iso] || []);
+  const three = (iso) => [0, 1, 2].map((k) => (state.trainingSchedule[iso] || [])[k] || '');
+  const save = async (rows) => {
+    if (!rows.length) return;
+    rows.forEach((r) => (state.trainingSchedule[r.day] = r.slots));
+    const { error } = await sb.from('training_schedule').upsert(rows.map((r) => ({ team_id: t.id, day: r.day, slots: r.slots })), { onConflict: 'team_id,day' });
+    if (error) toast(error.message); else if ($('trn-status')) $('trn-status').textContent = 'Planning enregistré';
+  };
+  const cell = (iso, s) => {
+    const L = locked[iso];
+    if (L) return `<div class="trn-c ${L.type === 'RACE' ? 'race' : 'travel'}">${L.type === 'RACE' ? 'Course' : 'Voyage / Logistique'}<small>${esc(L.label)}</small></div>`;
+    const cur = slotsOf(iso)[s] || '', kind = (TRN_SLOTS[s][1].find((a) => a[0] === cur) || [])[1] || 'none';
+    return state.trnDelegated ? `<div class="trn-c ${kind}">${esc(cur || '-')}</div>`
+      : `<select class="trn-c ${kind}" data-trn="${iso}|${s}"><option value="">-</option>${TRN_SLOTS[s][1].map(([a]) => `<option ${a === cur ? 'selected' : ''}>${a}</option>`).join('')}</select>`;
+  };
+  const draw = () => {
+    const days = weekDays();
+    c.innerHTML = `<div class="trn-top">
+      <div class="panel"><h4>Responsabilités</h4><div class="tabs"><button data-trd="0" class="${state.trnDelegated ? '' : 'on'}">Géré par le Manager</button><button data-trd="1" class="${state.trnDelegated ? 'on' : ''}">Délégué au Directeur sportif</button></div>
+        <p class="muted">${state.trnDelegated ? 'Le Directeur sportif construit le planning automatiquement (lecture seule).' : 'Vous composez le planning de chaque semaine.'}</p></div>
+      <div class="panel"><h4>Prochaine course</h4>${nr ? `<div class="big">${esc(nr.name)}</div><div class="muted">${fmtShort(nr.date)} · ${PROFILES[nr.profile_type] || ''} · ${nr.distance_km || '?'} km · dans ${Math.max(0, daysUntil(nr.date))} jour(s)</div>
+        <div class="stat-row"><span>Déplacement</span><b class="${away ? 'down' : ''}">${away ? nr.travel_km + ' km : veille et lendemain bloqués' : 'Course proche : pas de voyage'}</b></div>` : '<p class="muted">Aucune course prévue.</p>'}</div></div>
+      <div class="panel full"><h4>Planning d'entraînement</h4>
+        <div class="sq-bar"><div class="sq-ctl"><button data-trw="-7">&lt;</button><b style="text-transform:capitalize;align-self:center">${gd(state.trnWeek).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</b><button data-trw="7">&gt;</button><button data-trw="0">Aujourd'hui</button></div>
+          <div class="sq-ctl">${state.trnDelegated ? '' : '<button data-tra="auto">Planning automatique</button><button data-tra="copy">Copier la semaine</button><button data-tra="paste">Coller</button><button class="danger" data-tra="clear">Effacer</button>'}</div></div>
+        <div class="tbl"><div class="trn-grid"><div></div>${days.map((iso) => `<div class="trn-h ${iso === g.game_date ? 'today' : ''}">${DAYS[gd(iso).getDay()]}<small>${fmtShort(iso)}</small></div>`).join('')}
+          ${TRN_SLOTS.map(([label], s) => `<div class="trn-l">${label}</div>${days.map((iso) => `<div>${cell(iso, s)}</div>`).join('')}`).join('')}</div></div>
+        <div class="muted" id="trn-status" style="margin-top:.5rem"></div>
+        <div class="muted">Course : tous les créneaux sont pris. Voyage / Logistique : veille et lendemain d'une course à plus de 300 km, aucun entraînement possible.</div></div>`;
+  };
+  c.onchange = (e) => {
+    const s = e.target.closest('[data-trn]'); if (!s) return;
+    const [iso, i] = s.dataset.trn.split('|'), arr = three(iso); arr[+i] = s.value; save([{ day: iso, slots: arr }]).then(draw);
+  };
+  c.onclick = async (e) => {
+    const b = e.target.closest('[data-trd],[data-trw],[data-tra]'); if (!b) return;
+    if (b.dataset.trd !== undefined) { state.trnDelegated = b.dataset.trd === '1'; await sb.from('training_settings').upsert({ team_id: t.id, delegated: state.trnDelegated }, { onConflict: 'team_id' }); return draw(); }
+    if (b.dataset.trw !== undefined) { state.trnWeek = b.dataset.trw === '0' ? trnMonday(g.game_date) : trnAdd(state.trnWeek, +b.dataset.trw); return draw(); }
+    const free = weekDays().filter((iso) => !locked[iso]), act = b.dataset.tra;
+    if (act === 'auto') await save(free.map((iso) => ({ day: iso, slots: trnAuto(iso, races) })));
+    if (act === 'clear') await save(free.map((iso) => ({ day: iso, slots: ['', '', ''] })));
+    if (act === 'copy') { state.trnClip = weekDays().map((iso) => (locked[iso] ? null : three(iso))); return toast('Semaine copiée.'); }
+    if (act === 'paste') { if (!state.trnClip) return toast("Copiez d'abord une semaine."); await save(weekDays().map((iso, i) => (state.trnClip[i] && !locked[iso] ? { day: iso, slots: state.trnClip[i] } : null)).filter(Boolean)); }
+    draw();
+  };
+  draw();
 }
 
 // ---------- Démarrage ----------

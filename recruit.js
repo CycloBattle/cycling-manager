@@ -258,7 +258,7 @@ async function renderRecruitOverview(c) {
     <div class="panel"><h4>Objectifs de recrutement</h4><div class="muted">Demandes de la direction</div>
       ${objectives.map((o, i) => `<div class="stat-row"><div>${o.label}<small>${o.hint}</small></div><span style="display:flex;gap:.4rem;align-items:center"><span class="bd ${o.done ? 'green' : 'amber'}">${o.done ? 'Atteint' : 'À faire'}</span>${o.done ? '' : `<button data-obj="${i}">Chercher</button>`}</span></div>`).join('')}</div>
   </div>`;
-  c.onclick = (e) => { const b = e.target.closest('[data-rgo]'), ob = e.target.closest('[data-obj]'); if (b) go('recruit', b.dataset.rgo); else if (ob) objectives[+ob.dataset.obj].go(); };
+  c.onclick = (e) => { const b = e.target.closest('[data-rgo]'), ob = e.target.closest('[data-obj]'); if (b) b.dataset.rgo === 'recruiters' ? go('club', 'staff_scouting') : go('recruit', b.dataset.rgo); else if (ob) objectives[+ob.dataset.obj].go(); };
 }
 
 /* ---------- Recherches ciblées : missions d'observation ---------- */
@@ -291,7 +291,7 @@ async function renderMissions(c) {
         <div>${esc(zoneLabel(a))}</div><div class="muted">${z.length} coureurs dans la zone · connaissance moyenne ${avg} %</div>
         <div class="meter"><i style="width:${avg}%"></i></div><button class="danger" data-end="${a.id}">Arrêter la mission</button></div>`;
     }).join('') || '<div class="card muted">Aucune mission en cours.</div>'}</div></div>`;
-  if ($('tostaff')) $('tostaff').onclick = () => go('recruit', 'recruiters');
+  if ($('tostaff')) $('tostaff').onclick = () => go('club', 'staff_scouting');
   c.onclick = async (e) => {
     const b = e.target.closest('#launch,[data-end]'); if (!b) return;
     b.disabled = true;

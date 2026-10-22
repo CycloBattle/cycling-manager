@@ -284,6 +284,7 @@ async function renderTab() {
   if (tab === 'staff_db') return renderStaffDatabase(c);
   if (tab.startsWith('staff_')) return renderStaffList(c, tab);
   if (tab === 'overview' && state.menu === 'training') return renderTrainingOverview(c);
+  if (tab === 'individual') return renderIndividualTraining(c);
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
@@ -437,7 +438,7 @@ async function renderClubOverview(c) {
   const arr = (off.data || []).filter((o) => o.from_team_id === t.id), dep = (off.data || []).filter((o) => o.to_team_id === t.id);
   c.innerHTML = `<div class="rov">
     <div class="panel"><h4>Site du club</h4><div style="display:flex;gap:.8rem;align-items:center"><img class="tlogo" src="${esc(logoSrc(t))}" alt=""><div><div class="big">${esc(t.official_name || t.name)}</div><div class="muted">${esc(NATS[t.nationality] || t.nationality)}</div></div></div>
-      ${kv('Division', wt ? 'WorldTour' : 'Continental Pro')}${kv('Réputation du club', wt ? 'Mondiale' : 'Nationale')}${kv('Points UCI', t.uci_points)}${kv('Effectif', pro.length + ' coureurs')}
+      ${kv('Division', wt ? 'WorldTour' : 'Continental Pro')}${kv('Réputation du club', wt ? 'Mondiale' : 'Nationale')}${kv('Points UCI', t.uci_points)}${kv('Effectif', pro.length + ' coureurs')}<div style="display:flex;gap:.8rem;align-items:center;margin-top:.7rem">${avatarWithEdit(state.manager, 'manager')}<div><b>${esc(state.manager.first_name)} ${esc(state.manager.last_name)}</b><div class="muted">Manager</div></div></div>
       <div class="muted" style="margin-top:.5rem">Classement UCI</div>${near.map((x) => `<div class="stat-row ${x.id === t.id ? 'up' : ''}"><span>${ranks.indexOf(x) + 1}. ${esc(x.official_name || x.name)}</span><b>${x.uci_points} pts</b></div>`).join('')}</div>
     <div class="panel"><h4>Vision du club</h4><div class="muted">Objectifs du board (${objectives.length})</div>
       ${objectives.map((o) => `<div class="stat-row"><div>${o.l}<small>${o.h} · ${o.p}</small></div><span class="bd ${o.ok ? 'green' : 'amber'}">${o.ok ? 'Atteint' : 'En cours'}</span></div>`).join('')}</div>
@@ -730,16 +731,20 @@ function calculateStaffImpact(teamId, rider, ctx = SI_CTX[teamId]) {
   return { language, fatigueMult: language.fatigueMult * ctx.fatigueRec, recoveryMult: ctx.recoveryMult, trainingMult: language.trainingMult, youthMult, progressMult: language.trainingMult * youthMult, raceBonus: ctx.raceBonus, notes };
 }
 
-/* ===== Photos de coureurs et de staff ===== */
+/* ===== Photos de coureurs, de staff et de managers (URL + recadrage) ===== */
+const PHOTO_TABLES = { rider: 'riders', staff: 'staff', scout: 'scouts', manager: 'managers' };
 const initialsOf = (p) => esc((p.first_name ? p.first_name[0] + (p.last_name || '')[0] : String(p.name || '?').split(' ').map((s) => s[0]).slice(0, 2).join('')).toUpperCase());
+const refreshManager = async () => { const { data } = await sb.from('managers').select('*').eq('user_id', state.user.id).maybeSingle(); if (data) state.manager = data; };
 function getPersonAvatar(person, type = 'rider') {
   const url = person.photo_url || person.avatar, fallback = `<div class="rav">${initialsOf(person)}</div>`;
   if (!url || !/^https?:\/\//i.test(url)) return fallback;
-  return `<img src="${esc(url)}" class="avatar-img" alt="" referrerpolicy="no-referrer" data-fb="${esc(fallback)}" onerror="this.outerHTML=this.dataset.fb">`;
+  const c = person.photo_crop || {}, z = c.z || 1, x = c.x ?? 50, y = c.y ?? 50;
+  return `<span class="avatar-img-wrap"><img src="${esc(url)}" class="avatar-img" alt="" referrerpolicy="no-referrer" style="object-position:${x}% ${y}%;transform:scale(${z});transform-origin:${x}% ${y}%" data-fb="${esc(fallback)}" onerror="this.parentNode.outerHTML=this.dataset.fb"></span>`;
 }
-const avatarWithEdit = (person, type) => `<div class="rav-wrap">${getPersonAvatar(person, type)}<button type="button" class="rav-edit" data-photo="${type}|${person.id}" title="Éditer la photo">Éditer photo</button></div>`;
+const avatarWithEdit = (person, type) => `<div class="rav-wrap">${getPersonAvatar(person, type)}<div class="rav-tools"><button type="button" data-photo="${type}|${person.id}" title="Changer la photo (URL)">Photo</button><button type="button" data-crop="${type}|${person.id}" title="Recadrer la photo">Recadrer</button></div></div>`;
+
 async function editPersonPhoto(type, id) {
-  const table = { rider: 'riders', staff: 'staff', scout: 'scouts' }[type]; if (!table) return;
+  const table = PHOTO_TABLES[type]; if (!table) return;
   const { data } = await sb.from(table).select('photo_url').eq('id', id).maybeSingle();
   const url = prompt("Collez l'URL d'une image (lien direct .png ou .jpg). Laissez vide pour retirer la photo.", data?.photo_url || '');
   if (url === null) return;
@@ -747,11 +752,41 @@ async function editPersonPhoto(type, id) {
   if (clean && !/^https?:\/\/\S+$/i.test(clean)) return toast('URL invalide : elle doit commencer par http:// ou https://');
   const { error } = await sb.rpc('set_person_photo', { p_kind: type, p_id: id, p_url: clean });
   if (error) return toast(error.message);
-  toast(clean ? 'Photo enregistrée.' : 'Photo retirée.'); renderTab();
+  if (type === 'manager') await refreshManager();
+  toast(clean ? 'Photo enregistrée : utilisez « Recadrer » pour la cadrer.' : 'Photo retirée.'); renderTab();
+}
+
+async function openPhotoCropper(type, id) {
+  const table = PHOTO_TABLES[type]; if (!table) return;
+  const { data: p } = await sb.from(table).select('photo_url, photo_crop').eq('id', id).maybeSingle();
+  if (!p?.photo_url) return toast('Ajoutez d\'abord une photo avec le bouton « Photo ».');
+  const cr = { z: 1, x: 50, y: 50, ...(p.photo_crop || {}) }, ov = document.createElement('div'); ov.className = 'adm-ov'; ov.id = 'crop-modal';
+  ov.innerHTML = `<div class="adm-box" style="max-width:440px"><div class="neg-head"><h3 style="margin:0">Recadrer la photo</h3><button class="link" id="cr-close">Fermer</button></div>
+    <div style="display:flex;justify-content:center;margin-bottom:1rem"><span class="avatar-img-wrap" style="width:180px;height:180px"><img id="cr-img" src="${esc(p.photo_url)}" class="avatar-img" alt="" referrerpolicy="no-referrer"></span></div>
+    <label>Zoom : <b id="cr-zv"></b></label><input id="cr-z" type="range" min="1" max="3" step="0.05" value="${cr.z}">
+    <label style="margin-top:.6rem">Position horizontale</label><input id="cr-sx" type="range" min="0" max="100" value="${cr.x}">
+    <label style="margin-top:.6rem">Position verticale</label><input id="cr-sy" type="range" min="0" max="100" value="${cr.y}">
+    <div class="neg-actions"><button class="link" id="cr-reset">Réinitialiser</button><button class="link" id="cr-cancel">Annuler</button><button id="cr-save">Enregistrer</button></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove(), val = () => ({ z: +$('cr-z').value, x: +$('cr-sx').value, y: +$('cr-sy').value });
+  const apply = () => { const v = val(), im = $('cr-img'); im.style.objectPosition = `${v.x}% ${v.y}%`; im.style.transform = `scale(${v.z})`; im.style.transformOrigin = `${v.x}% ${v.y}%`; $('cr-zv').textContent = '×' + v.z.toFixed(2); };
+  ['cr-z', 'cr-sx', 'cr-sy'].forEach((i) => ($(i).oninput = apply)); apply();
+  $('cr-close').onclick = $('cr-cancel').onclick = close; ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  $('cr-reset').onclick = () => { $('cr-z').value = 1; $('cr-sx').value = 50; $('cr-sy').value = 50; apply(); };
+  $('cr-save').onclick = async () => {
+    const { error } = await sb.rpc('set_person_crop', { p_kind: type, p_id: id, p_crop: val() });
+    if (error) return toast(error.message);
+    if (type === 'manager') await refreshManager();
+    toast('Recadrage enregistré.'); close(); renderTab();
+  };
 }
 if (!window.photoBound) {
   window.photoBound = true;
-  document.addEventListener('click', (e) => { const b = e.target.closest('[data-photo]'); if (b) { const [t, id] = b.dataset.photo.split('|'); editPersonPhoto(t, id); } });
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-photo]'), k = e.target.closest('[data-crop]');
+    if (b) { const [t, id] = b.dataset.photo.split('|'); editPersonPhoto(t, id); }
+    else if (k) { const [t, id] = k.dataset.crop.split('|'); openPhotoCropper(t, id); }
+  });
 }
 
 /* ===== ENTRAÎNEMENT : vue d'ensemble et planning hebdomadaire ===== */
@@ -840,6 +875,72 @@ async function renderTrainingOverview(c) {
     if (act === 'copy') { state.trnClip = weekDays().map((iso) => (locked[iso] ? null : three(iso))); return toast('Semaine copiée.'); }
     if (act === 'paste') { if (!state.trnClip) return toast("Copiez d'abord une semaine."); await save(weekDays().map((iso, i) => (state.trnClip[i] && !locked[iso] ? { day: iso, slots: state.trnClip[i] } : null)).filter(Boolean)); }
     draw();
+  };
+  draw();
+}
+
+/* ===== ENTRAÎNEMENT INDIVIDUEL ===== */
+const IT_FOCUS = [['CLIMB', 'Montagne / Grimpeur'], ['TT', 'Contre-la-montre'], ['SPRINT', 'Sprint & explosivité'], ['HILLS', 'Vallons & agressivité'], ['ENDURANCE', 'Endurance & caisse'], ['ALL', 'Polyvalence']];
+const IT_INT = [['DOUBLE', 'Double intensité'], ['NORMAL', 'Normal'], ['HALF', 'Demi-intensité'], ['REST', 'Repos forcé']];
+const IT_ATTRS = { CLIMB: ['MTN', 'MM', 'STA', 'REC'], TT: ['TTR', 'PRL', 'FLA', 'RES'], SPRINT: ['SPR', 'ACC', 'ATT'], HILLS: ['HIL', 'ATT', 'ACC', 'DHI'], ENDURANCE: ['STA', 'RES', 'REC', 'FLA'], ALL: ['MTN', 'HIL', 'FLA', 'SPR', 'TTR'] };
+const itBonus = (m) => (m ? Math.max(0, Math.min(0.7, ((m.A.prep + m.A.motiv + m.A.race) / 3 - 55) / 60)) : 0);   // bonus du référent (préparation, motivation, stratégie)
+const itColor = (v) => (v >= 8 ? 'up' : v >= 6.5 ? '' : 'down');
+const itRating = (r, p, bonus) => {
+  const base = 5.7 + (hashN(r.id + 'trn') % 16) / 10, inten = { DOUBLE: 0.5, NORMAL: 0.2, HALF: -0.3, REST: -0.8 }[p.intensity] ?? 0.2;
+  const fat = -((r.fatigue || 0) / 100) * (p.intensity === 'DOUBLE' ? 2 : 1), inj = r.injured ? (p.rehab ? 0.6 : -0.8) : 0;
+  return Math.max(1, Math.min(10, base + inten + fat + bonus + inj));
+};
+
+async function renderIndividualTraining(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game;
+  const [rs, st, pl] = await Promise.all([sb.from('riders').select('*').in('team_id', myTeamIds()), sb.from('staff').select('*').eq('team_id', t.id), sb.from('individual_training').select('*').eq('team_id', t.id)]);
+  if (pl.error) { c.innerHTML = `<div class="panel"><h4>Entraînement individuel</h4><p class="err">${esc(pl.error.message)} : lancez le script SQL de l'entraînement individuel dans Supabase.</p></div>`; return; }
+  const riders = (rs.data || []).map((r) => ({ ...r, injured: !!(r.injured_until && r.injured_until > g.game_date) })).sort((a, b) => a.last_name.localeCompare(b.last_name, 'fr'));
+  const coaches = (st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { key: 'staff:' + x.id, name: x.name, role, A: staffAttrs(x, role) }; }).filter((m) => ['HEAD_DS', 'DS', 'TRAINER', 'TACTICS'].includes(m.role));
+  const medical = (st.data || []).filter((x) => ['DOCTOR', 'PHYSIO', 'MASSEUR'].includes(x.role)).length;
+  const plans = Object.fromEntries((pl.data || []).map((p) => [p.rider_id, p])), planOf = (id) => plans[id] || { focus: 'ALL', intensity: 'NORMAL', rehab: false, coach: null };
+  const rate = (r) => itRating(r, planOf(r.id), itBonus(coaches.find((m) => m.key === planOf(r.id).coach)));
+  if (!riders.some((r) => r.id === state.itSel)) state.itSel = riders[0]?.id; state.itQ = state.itQ || '';
+  const save = async (r, patch) => {
+    const p = { ...planOf(r.id), ...patch }; plans[r.id] = p;
+    const { error } = await sb.from('individual_training').upsert({ team_id: t.id, rider_id: r.id, focus: p.focus, intensity: p.intensity, rehab: p.rehab, coach: p.coach }, { onConflict: 'team_id,rider_id' });
+    if (error) toast(error.message); draw();
+  };
+  const listHTML = () => riders.filter((r) => !state.itQ || (r.first_name + ' ' + r.last_name).toLowerCase().includes(state.itQ.toLowerCase())).map((r) => { const v = rate(r);
+    return `<div class="it-row ${r.id === state.itSel ? 'sel' : ''}" data-itsel="${r.id}"><span class="av">${esc(r.first_name[0] + r.last_name[0])}</span><span class="it-n">${esc(r.first_name)} ${esc(r.last_name)}${r.injured ? ' <span class="bd red">Blessé</span>' : ''}</span><b class="${itColor(v)}">${v.toFixed(2)} / 10</b></div>`; }).join('') || '<p class="muted">Aucun coureur.</p>';
+  const detail = () => {
+    const r = riders.find((x) => x.id === state.itSel); if (!r) return '<p class="muted pad">Aucun coureur sélectionné.</p>';
+    const p = planOf(r.id), m = coaches.find((x) => x.key === p.coach), bonus = itBonus(m), A = attrsOf(r), hl = IT_ATTRS[p.focus] || [], up = p.intensity === 'DOUBLE' || p.intensity === 'NORMAL', rating = rate(r);
+    const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('');
+    const row = ([code, label]) => { const on = hl.includes(code); return `<div class="arow ${on ? 'it-hl' : ''}"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${on ? `<span class="tr ${up ? 'up' : 'flat'}">${up ? '▲' : '►'}</span>` : ''}<span class="an ${tone(A[code])}">${A[code]}</span></span></div>`; };
+    return `<div class="rhead" style="margin-bottom:.75rem">${avatarWithEdit(r, 'rider')}<div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)}</div><div class="muted">${r.age} ans · ${flag(r.nationality)} · Forme ${100 - (r.fatigue || 0)} % · Fatigue ${r.fatigue || 0} %</div></div>
+        <div class="rbox"><div class="muted">Note d'entraînement</div><b class="${itColor(rating)}">${rating.toFixed(2)} / 10</b></div></div>
+      <div class="rcols"><div class="panel"><h4>Programme individuel</h4>
+          <label>Focus individuel</label><select data-itf>${opts(IT_FOCUS, p.focus)}</select>
+          <label style="margin-top:.6rem">Intensité individuelle</label><select data-iti>${opts(IT_INT, p.intensity)}</select>
+          ${p.intensity === 'DOUBLE' ? '<p class="down" style="font-size:.8rem">Double intensité : progression plus rapide, mais fatigue et risque de blessure accrus.</p>' : p.intensity === 'REST' ? '<p class="muted" style="font-size:.8rem">Repos forcé : aucune progression, récupération maximale.</p>' : ''}
+          <label style="margin-top:.6rem">Entraîneur / staff référent</label><select data-itc ${coaches.length ? '' : 'disabled'}><option value="">Aucun</option>${coaches.map((x) => `<option value="${x.key}" ${x.key === p.coach ? 'selected' : ''}>${esc(x.name)} · ${esc(STAFF_LABEL[x.role] || x.role)} (+${Math.round(itBonus(x) * 30)} %)</option>`).join('')}</select>
+          <p class="muted" style="font-size:.8rem">${m ? `Bonus de progression : +${Math.round(bonus * 30)} % (préparation, motivation et stratégie de ${esc(m.name)}).` : coaches.length ? 'Aucun référent : pas de bonus.' : 'Aucun entraîneur ni directeur sportif dans votre staff : embauchez-en un (CLUB → Base de données staff).'}</p></div>
+        <div class="panel"><h4>Rééducation & médical</h4>${r.injured ? `<div class="stat-row"><span>Blessure</span><b class="down">${esc(r.injury_type || 'Blessure')}</b></div><div class="stat-row"><span>Retour prévu</span><b>${fmtShort(r.injured_until)}</b></div>
+            <div class="stat-row"><span>Programme de rééducation</span><b class="${p.rehab ? 'up' : ''}">${p.rehab ? 'Actif' : 'Inactif'}</b></div>
+            <button data-itrehab ${medical || p.rehab ? '' : 'disabled'} style="margin-top:.5rem">${p.rehab ? 'Arrêter la rééducation' : 'Activer la rééducation / reconstitution physique'}</button>
+            <p class="muted" style="font-size:.8rem">${medical ? 'Supervisé par votre médecin / kiné : retour plus rapide et reprise progressive.' : 'Aucun médecin ni kiné dans votre staff : rééducation impossible.'}</p>` : '<p class="muted">Aucune blessure en cours : pas de rééducation nécessaire.</p>'}</div>
+        <div class="panel"><h4>Légende</h4><p class="muted" style="font-size:.85rem">Les notes en surbrillance sont celles travaillées par le focus « ${esc(IT_FOCUS.find((f) => f[0] === p.focus)[1])} ».</p></div></div>
+      <div class="rcols" style="grid-template-columns:1fr 1fr">${ATTR_BLOCKS.map(([title, list]) => `<div class="panel"><h4>${title}</h4>${list.map(row).join('')}</div>`).join('')}</div>`;
+  };
+  const draw = () => {
+    c.innerHTML = `<div class="it-layout"><aside class="panel"><h4>Effectif (${riders.length})</h4><input id="it-q" placeholder="Rechercher un coureur" value="${esc(state.itQ)}"><div class="it-list" id="it-list">${listHTML()}</div></aside><section>${detail()}</section></div>`;
+    $('it-q').oninput = (e) => { state.itQ = e.target.value; $('it-list').innerHTML = listHTML(); };
+  };
+  c.onclick = (e) => {
+    const s = e.target.closest('[data-itsel]'), rh = e.target.closest('[data-itrehab]');
+    if (s) { state.itSel = s.dataset.itsel; draw(); }
+    else if (rh) { const r = riders.find((x) => x.id === state.itSel); save(r, { rehab: !planOf(r.id).rehab }); }
+  };
+  c.onchange = (e) => {
+    const r = riders.find((x) => x.id === state.itSel), el = e.target; if (!r) return;
+    if (el.matches('[data-itf]')) save(r, { focus: el.value }); else if (el.matches('[data-iti]')) save(r, { intensity: el.value }); else if (el.matches('[data-itc]')) save(r, { coach: el.value || null });
   };
   draw();
 }

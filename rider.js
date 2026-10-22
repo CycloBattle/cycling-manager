@@ -101,7 +101,7 @@ async function renderRider(c) {
   c.innerHTML = `
     <div class="crumb"><a data-back>Effectif</a> › Rapport de coureur</div>
     <div class="rhead">
-      <div class="rav">${esc(r.first_name[0] + r.last_name[0])}</div>
+            ${avatarWithEdit(r, 'rider')}
       <div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)} <span class="bd blue">${num}</span> ${watchers.length ? `<span class="bd green obs">Observé<span class="obs-pop"><b>Observé par :</b>${watchers.map((n) => `<div>(Transfert - ${esc(n)})</div>`).join('')}</span></span>` : ''}</div>
         <div class="muted">${r.age} ans · ${flag(r.nationality)}</div>
         <div class="rbad"><span class="bd violet">${SPEC_NAMES[r.spec]}</span> <span class="bd spec">${esc(r.role)}</span>${r.u23 ? ' <span class="bd amber">Espoir U23</span>' : ''}${known && A.MTN >= 78 ? ' <span class="bd gold">Montagne max</span>' : ''}</div>${actionsMenu}</div>

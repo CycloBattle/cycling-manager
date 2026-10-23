@@ -35,7 +35,6 @@ function openRider(id) { state.rid = id; go(state.menu, 'rider'); }
 document.addEventListener('click', (e) => { const a = e.target.closest('[data-rider]'); if (a) { e.preventDefault(); openRider(a.dataset.rider); } });
 
 async function renderRider(c) {
-  const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const g = state.game, mine = state.team.id, mineIds = myTeamIds();
   const { data: r0, error } = await sb.from('riders').select('*').eq('id', state.rid || '').maybeSingle();
@@ -98,7 +97,8 @@ async function renderRider(c) {
   };
   const row = ([code, label]) => `<div class="arow"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${attrCell(code)}</span></div>`;
   const card = (title, body) => `<div class="scard"><h5>${title}</h5>${body}</div>`;
-
+  const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
+ 
   c.innerHTML = `
     <div class="crumb"><a data-back>Effectif</a> › Rapport de coureur</div>
     <div class="rhead">

@@ -695,7 +695,7 @@ async function loadStaffImpactCtx(teamId) {
     sb.from('riders').select('*').in('team_id', ids),
   ]);
   const members = [
-    ...(st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { role, name: x.name, langs: siLangs(x), A: staffAttrs(x, role) }; }),
+    ...(st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { role, name: x.name, langs: siLangs(x), A: staffAttrs(x, role) };}),
     ...(sc.data || []).map((x) => ({ role: 'SCOUT', name: x.name, langs: siLangs(x), A: staffAttrs({ id: x.id, rating: Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5) }, 'SCOUT') })),
   ];
   const count = {};
@@ -893,8 +893,8 @@ const itRating = (r, p, bonus) => {
   return Math.max(1, Math.min(10, base + inten + fat + bonus + inj));
 };
 
-await ensureStaffCtx();
 async function renderIndividualTraining(c) {
+  await ensureStaffCtx();
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, g = state.game;
   const [rs, st, pl] = await Promise.all([sb.from('riders').select('*').in('team_id', myTeamIds()), sb.from('staff').select('*').eq('team_id', t.id), sb.from('individual_training').select('*').eq('team_id', t.id)]);

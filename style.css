@@ -253,3 +253,8 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .sim-g { cursor:pointer; } .sim-g:hover circle { r:8; }
 .sim-legend { display:flex; gap:.9rem; flex-wrap:wrap; font-size:.72rem; color:var(--muted); margin-top:.4rem; } .sim-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:.3rem; vertical-align:middle; }
 @media (max-width:900px) { .sim-layout { grid-template-columns:1fr; } }
+
+.re-journal { max-height:360px; overflow:auto; font-size:.82rem; }
+.re-l { padding:.3rem 0; border-bottom:1px solid var(--line); } .re-l span { display:block; color:var(--muted); font-size:.7rem; }
+.re-l.mine { border-left:3px solid #db2777; padding-left:.4rem; }
+.re-speed button.on { background:#db2777; }

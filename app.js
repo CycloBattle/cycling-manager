@@ -234,7 +234,8 @@ async function continueGame() {
     const { error } = await sb.from('game_state').update({ game_date: d.toISOString().slice(0, 10) }).eq('id', 1);
     if (error) return toast(error.message);
     const o = await sb.rpc('advance_observations');
-    toast(o.error ? 'Jour suivant (observations : ' + o.error.message + ')' : 'Jour suivant.');
+    const te = await applyTrainingEffects(1, state.game.game_date).catch((e) => ({ error: e.message }));
+    toast((o.error ? 'Jour suivant (observations : ' + o.error.message + ')' : 'Jour suivant.') + (te?.error ? ' Entraînement : ' + te.error : te ? ` Entraînement : +${te.gains} pt(s) d'attributs, ${te.injuries} blessure(s).` : ''));
   } else toast("Seul l'administrateur fait avancer le temps : date synchronisée.");
   await loadGame(); viewGame();
 }
@@ -694,8 +695,8 @@ async function loadStaffImpactCtx(teamId) {
     sb.from('riders').select('*').in('team_id', ids),
   ]);
   const members = [
-    ...(st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { role, langs: siLangs(x), A: staffAttrs(x, role) }; }),
-    ...(sc.data || []).map((x) => ({ role: 'SCOUT', langs: siLangs(x), A: staffAttrs({ id: x.id, rating: Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5) }, 'SCOUT') })),
+    ...(st.data || []).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { role, name: x.name, langs: siLangs(x), A: staffAttrs(x, role) }; }),
+    ...(sc.data || []).map((x) => ({ role: 'SCOUT', name: x.name, langs: siLangs(x), A: staffAttrs({ id: x.id, rating: Math.round(((x.judging_current_ability + x.judging_potential_ability + x.adaptability) / 3) * 5) }, 'SCOUT') })),
   ];
   const count = {};
   [...(rs.data || []).map((r) => siLangs(r)), ...members.map((m) => m.langs)].forEach((l) => l.forEach((k) => (count[k] = (count[k] || 0) + 1)));
@@ -706,6 +707,7 @@ async function loadStaffImpactCtx(teamId) {
   };
   const R = (top(SI_GROUPS.recov, 'recov') + top(SI_GROUPS.recov, 'prep')) / 200, Y = (top(SI_GROUPS.talent, 'talent') + top(SI_GROUPS.motiv, 'motiv')) / 200, S = top(SI_GROUPS.race, 'race') / 100;
   SI_CTX[teamId] = {
+    coaches: members.filter((m) => SI_COACH.includes(m.role)),
     workLangs: [...new Set(['EN', major])], coachLangs: new Set(members.filter((m) => SI_COACH.includes(m.role)).flatMap((m) => m.langs)),
     fatigueRec: 1 - siClamp((R - 0.5) * 0.4, 0, 0.2),      // jusqu'à -20 % de fatigue accumulée (préparation physique + récupération)
     recoveryMult: 1 + siClamp((R - 0.5) * 0.6, 0, 0.3),    // jusqu'à +30 % de vitesse de récupération de forme
@@ -891,6 +893,7 @@ const itRating = (r, p, bonus) => {
   return Math.max(1, Math.min(10, base + inten + fat + bonus + inj));
 };
 
+await ensureStaffCtx();
 async function renderIndividualTraining(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const t = state.team, g = state.game;
@@ -914,7 +917,7 @@ async function renderIndividualTraining(c) {
     const p = planOf(r.id), m = coaches.find((x) => x.key === p.coach), bonus = itBonus(m), A = attrsOf(r), hl = IT_ATTRS[p.focus] || [], up = p.intensity === 'DOUBLE' || p.intensity === 'NORMAL', rating = rate(r);
     const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${l}</option>`).join('');
     const row = ([code, label]) => { const on = hl.includes(code); return `<div class="arow ${on ? 'it-hl' : ''}"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${on ? `<span class="tr ${up ? 'up' : 'flat'}">${up ? '▲' : '►'}</span>` : ''}<span class="an ${tone(A[code])}">${A[code]}</span></span></div>`; };
-    return `<div class="rhead" style="margin-bottom:.75rem">${avatarWithEdit(r, 'rider')}<div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)}</div><div class="muted">${r.age} ans · ${flag(r.nationality)} · Forme ${100 - (r.fatigue || 0)} % · Fatigue ${r.fatigue || 0} %</div></div>
+    return `<div class="rhead" style="margin-bottom:.75rem">${avatarWithEdit(r, 'rider')}<div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)}</div><div class="muted">${r.age} ans · ${flag(r.nationality)} · Forme de course ${Math.round(r.fitness ?? 70)} % · Fatigue ${r.fatigue || 0} %</div><div class="muted">Langues : ${esc(siLangs(r).map(siLabel).join(', '))} · ${calculateStaffImpact(t.id, r).language.penalized ? '<span class="down">barrière de la langue : -15 % entraînement, +10 % fatigue</span>' : '<span class="up">communication avec le staff OK</span>'}</div></div>
         <div class="rbox"><div class="muted">Note d'entraînement</div><b class="${itColor(rating)}">${rating.toFixed(2)} / 10</b></div></div>
       <div class="rcols"><div class="panel"><h4>Programme individuel</h4>
           <label>Focus individuel</label><select data-itf>${opts(IT_FOCUS, p.focus)}</select>
@@ -943,6 +946,107 @@ async function renderIndividualTraining(c) {
     if (el.matches('[data-itf]')) save(r, { focus: el.value }); else if (el.matches('[data-iti]')) save(r, { intensity: el.value }); else if (el.matches('[data-itc]')) save(r, { coach: el.value || null });
   };
   draw();
+}
+
+/* ===== Langues affichées sur les fiches ===== */
+const SI_LANG_NAME = { FR: 'Français', EN: 'Anglais', IT: 'Italien', ES: 'Espagnol', DE: 'Allemand', NL: 'Néerlandais', DA: 'Danois', PT: 'Portugais', NO: 'Norvégien', SV: 'Suédois' };
+const siLabel = (l) => SI_LANG_NAME[l] || l;
+async function ensureStaffCtx() { const c = SI_CTX[state.team.id]; if (!c || Date.now() - c.at > 60000) await loadStaffImpactCtx(state.team.id); return SI_CTX[state.team.id]; }
+function riderLangHTML(r) {
+  const ctx = SI_CTX[state.team.id], L = calculateStaffImpact(state.team.id, r, ctx).language, langs = L.langs || siLangs(r), mates = (ctx?.coaches || []).filter((m) => m.langs.some((l) => langs.includes(l)));
+  const status = L.speaks ? `Langue de travail maîtrisée (${L.workLangs.filter((l) => langs.includes(l)).map(siLabel).join(', ')})` : L.covered ? "Barrière compensée par l'encadrement" : 'Barrière de la langue : -15 % entraînement, +10 % fatigue';
+  return `<div class="stat-row"><span>Langues parlées</span><b>${esc(langs.map(siLabel).join(', '))}</b></div>
+    <div class="stat-row"><span>Communication avec le staff</span><b class="${L.penalized ? 'down' : 'up'}">${esc(status)}</b></div>
+    <div class="stat-row"><span>Encadrants compatibles</span><b>${mates.length ? esc(mates.map((m) => m.name).join(', ')) : 'Aucun'}</b></div>`;
+}
+
+/* ===== MOTEUR D'IMPACT DE L'ENTRAÎNEMENT ===== */
+const TE_LOAD = [
+  { 'Endurance fondamentale': 0.55, 'PMA / Bosses': 0.9, 'Contre-la-montre': 0.85, 'Sprint & train': 0.85, Repos: 0 },
+  { 'Musculation / Gainage': 0.6, 'Tactique de course': 0.2, Reconnaissance: 0.4, 'Récupération active': 0.15, Repos: 0 },
+  { 'Soins & physiothérapie': 0.05, Repos: 0 },
+];
+const TE_W = [0.5, 0.35, 0.15];   // poids des 3 créneaux dans la charge du jour
+const TE_EX_ATTRS = { 'Endurance fondamentale': ['STA', 'RES', 'REC', 'FLA'], 'PMA / Bosses': ['MTN', 'MM', 'HIL', 'ACC'], 'Contre-la-montre': ['TTR', 'PRL', 'RES'], 'Sprint & train': ['SPR', 'ACC'], 'Musculation / Gainage': ['ACC', 'SPR', 'COB'], Reconnaissance: ['DHI'] };
+const TE_MULT = { DOUBLE: 1.5, NORMAL: 1, HALF: 0.6, REST: 0.1 };   // intensité individuelle
+const TE_COLS = ['mtn', 'mm', 'hil', 'dhi', 'att', 'ttr', 'prl', 'fla', 'cob', 'spr', 'acc', 'sta', 'res', 'rec'];
+const teClamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// Appelée par l'admin à chaque passage de jour (continueGame). Traite les équipes jouées et leur équipe de développement.
+async function applyTrainingEffects(daysPassed = 1, startIso = state.game.game_date) {
+  if (!state.isAdmin) return null;
+  const { data: pro } = await sb.from('teams').select('id').not('manager_id', 'is', null);
+  if (!(pro || []).length) return null;
+  const pids = pro.map((x) => x.id), { data: kids } = await sb.from('teams').select('id, parent_team_id').in('parent_team_id', pids), tids = [...pids, ...(kids || []).map((x) => x.id)];
+  const [rs, st, sc, se, it, rc] = await Promise.all([
+    sb.from('riders').select('*').in('team_id', tids), sb.from('staff').select('*').in('team_id', pids),
+    sb.from('training_schedule').select('*').in('team_id', pids).gte('day', trnAdd(startIso, -6)).lte('day', trnAdd(startIso, daysPassed)),
+    sb.from('training_settings').select('*').in('team_id', pids), sb.from('individual_training').select('*').in('team_id', pids), sb.from('races').select('*').order('date'),
+  ]);
+  if (rs.error || sc.error) throw new Error((rs.error || sc.error).message);
+  const races = rc.data || [], locked = trnLocked(races), ownerOf = (id) => (pids.includes(id) ? id : (kids || []).find((k) => k.id === id)?.parent_team_id), T = {};
+  for (const id of pids) {
+    const members = (st.data || []).filter((x) => x.team_id === id).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { key: 'staff:' + x.id, role, A: staffAttrs(x, role) }; });
+    T[id] = { ctx: await loadStaffImpactCtx(id), members, medical: members.filter((m) => ['DOCTOR', 'PHYSIO'].includes(m.role)).length,
+      delegated: !!(se.data || []).find((x) => x.team_id === id)?.delegated, rows: Object.fromEntries((sc.data || []).filter((x) => x.team_id === id).map((x) => [x.day, x.slots])) };
+  }
+  const slotsOf = (T0, iso) => (T0.delegated || !T0.rows[iso] ? trnAuto(iso, races) : T0.rows[iso]);                    // jour non rempli : planning du directeur sportif
+  const dayLoad = (T0, iso) => { const L = locked[iso]; if (L) return L.type === 'RACE' ? 0.8 : 0.1; const s = slotsOf(T0, iso); return TE_W.reduce((a, w, i) => a + w * (TE_LOAD[i][s[i] || 'Repos'] || 0), 0); };
+  const weekly = (T0, iso) => ([...Array(7)].reduce((a, _, i) => a + dayLoad(T0, trnAdd(iso, -i)), 0) / 7 / 0.85) * 100;   // charge hebdomadaire en % (planning type ≈ 60 %)
+  const ip = Object.fromEntries((it.data || []).map((x) => [x.rider_id, x])), FIELDS = ['fatigue', 'fitness', 'injured_until', 'injury_type', 'training_progress', ...TE_COLS];
+  const R = Object.fromEntries((rs.data || []).map((r) => [r.id, { ...r }])), snap = Object.fromEntries((rs.data || []).map((r) => [r.id, JSON.stringify(FIELDS.map((f) => r[f]))]));
+  const sum = { gains: 0, injuries: 0, healed: 0, over: 0, under: 0, language: 0 };
+
+  for (let d = 0; d < daysPassed; d++) {
+    const iso = trnAdd(startIso, d), last = d === daysPassed - 1;
+    for (const r of Object.values(R)) {
+      const owner = ownerOf(r.team_id), T0 = T[owner]; if (!T0) continue;
+      const plan = ip[r.id] || { focus: 'ALL', intensity: 'NORMAL', rehab: false, coach: null }, mult = TE_MULT[plan.intensity] ?? 1, injured = !!(r.injured_until && r.injured_until > iso);
+      const rehab = injured && plan.rehab && T0.medical > 0, bonus = itBonus(T0.members.find((m) => m.key === plan.coach)), imp = calculateStaffImpact(owner, r, T0.ctx);
+      const W = injured ? (rehab ? 35 : 0) : Math.min(130, weekly(T0, iso) * mult), dayL = injured ? (rehab ? 0.35 : 0) : Math.min(1.2, dayLoad(T0, iso) * mult);
+      // 1. Fatigue : charge du jour (+25 % en sur-entraînement) moins récupération (stat Récupération, staff, repos forcé) ; barrière de langue : +10 % de fatigue
+      const fat = teClamp((r.fatigue || 0) + dayL * 14 * imp.fatigueMult * (W > 85 ? 1.25 : 1) - (4 + (r.recovery || 50) / 20) * imp.recoveryMult * (plan.intensity === 'REST' ? 1.4 : 1), 0, 100);
+      // 2. Forme physique de course selon la charge hebdomadaire
+      const f0 = Number(r.fitness ?? 70); let df;
+      if (injured) df = rehab ? 0.3 : -1.0;                                  // blessé sans rééducation supervisée : perte de forme
+      else if (W < 40) df = -0.8 * (1 + (40 - W) / 40);                      // sous-entraînement : la forme régresse
+      else if (W < 50) df = -0.2;
+      else if (W <= 80) df = (75 - f0) * 0.08;                               // équilibre : maintien de la forme
+      else if (W <= 85) df = 0.1;
+      else df = 0.3 - Math.max(0, fat - 70) * 0.05;                          // sur-entraînement : gain court terme, usure
+      if (fat > 80) df -= 0.4;
+      r.fatigue = fat; r.fitness = teClamp(f0 + df, 0, 100);
+      // 3. Progression des attributs (jamais pour un blessé) : focus individuel + exercices du planning, âge, charge, langue, staff référent, détection des jeunes
+      if (!injured) {
+        const w = {}; (IT_ATTRS[plan.focus] || []).forEach((a) => (w[a] = (w[a] || 0) + 1));
+        if (!locked[iso]) slotsOf(T0, iso).forEach((ex) => (TE_EX_ATTRS[ex] || []).forEach((a) => (w[a] = (w[a] || 0) + 0.5)));
+        const ageF = r.age <= 22 ? 1 : r.age <= 26 ? 0.6 : r.age <= 30 ? 0.3 : 0.05, loadF = W < 40 ? 0.2 : W < 50 ? 0.6 : W <= 80 ? 1 : W <= 85 ? 1.15 : 1.4;
+        const k = 0.012 * ageF * loadF * imp.progressMult * (1 + bonus * 0.3), cap = r.potential != null ? Math.min(85, Math.round(62 + Number(r.potential) * 4.6)) : 80, prog = { ...(r.training_progress || {}) };
+        for (const [code, wt] of Object.entries(w)) {
+          const col = code.toLowerCase(); if (r[col] == null) continue;
+          prog[col] = (prog[col] || 0) + k * wt;
+          while (prog[col] >= 1 && r[col] < cap) { r[col] += 1; prog[col] -= 1; sum.gains++; }
+          if (r[col] >= cap) prog[col] = 0;
+        }
+        r.training_progress = prog;
+        // 4. Risque de blessure (+25 % en sur-entraînement)
+        if (!locked[iso] && Math.random() < 0.002 * (1 + fat / 100) * (W > 85 ? 1.25 : 1) * (fat > 70 ? 1.5 : 1) * (plan.intensity === 'DOUBLE' ? 1.3 : 1)) {
+          r.injured_until = trnAdd(iso, 7 + Math.floor(Math.random() * 28)); r.injury_type = "Blessure à l'entraînement"; sum.injuries++;
+        }
+      } else {                                                               // convalescence : la rééducation supervisée double la vitesse de guérison
+        const until = rehab ? trnAdd(r.injured_until, -1) : r.injured_until;
+        if (until <= trnAdd(iso, 1)) { r.injured_until = null; r.injury_type = null; sum.healed++; } else r.injured_until = until;
+      }
+      if (last) { if (W > 85) sum.over++; if (!injured && W < 40) sum.under++; if (imp.language.penalized) sum.language++; }
+    }
+  }
+  const patches = Object.values(R).filter((r) => JSON.stringify(FIELDS.map((f) => r[f])) !== snap[r.id]).map((r) => {
+    const p = Object.fromEntries(FIELDS.map((f) => [f, r[f]])); p.fatigue = Math.round(p.fatigue); p.fitness = Math.round(p.fitness * 10) / 10;
+    if (TE_COLS.some((c) => r[c] !== (rs.data.find((x) => x.id === r.id) || {})[c])) Object.assign(p, legacyStats(r));
+    return { id: r.id, p };
+  });
+  for (let i = 0; i < patches.length; i += 15) await Promise.all(patches.slice(i, i + 15).map((x) => sb.from('riders').update(x.p).eq('id', x.id)));
+  return { ...sum, riders: patches.length };
 }
 
 // ---------- Démarrage ----------

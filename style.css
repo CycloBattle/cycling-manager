@@ -246,3 +246,10 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .trn-c.rec { background:#4c1d95; border-color:#7c3aed; } .trn-c.rest { background:#374151; } .trn-c.race { background:#9d174d; border-color:#db2777; font-weight:700; }
 .trn-c.travel { background:repeating-linear-gradient(45deg,#1f2937,#1f2937 8px,#111827 8px,#111827 16px); border-style:dashed; color:#9ca3af; }
 @media (max-width:900px) { .trn-top { grid-template-columns:1fr; } .trn-grid { grid-template-columns:70px repeat(7,minmax(90px,1fr)); } }
+
+.sim-layout { display:grid; grid-template-columns:260px minmax(0,1fr); gap:.75rem; align-items:start; } .sim-layout .panel + .panel { margin-top:.75rem; }
+.sim-svg { width:100%; height:auto; display:block; border-radius:8px; }
+.sim-ctl { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; } .sim-ctl button { padding:.25rem .7rem; font-size:.8rem; }
+.sim-g { cursor:pointer; } .sim-g:hover circle { r:8; }
+.sim-legend { display:flex; gap:.9rem; flex-wrap:wrap; font-size:.72rem; color:var(--muted); margin-top:.4rem; } .sim-legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:.3rem; vertical-align:middle; }
+@media (max-width:900px) { .sim-layout { grid-template-columns:1fr; } }

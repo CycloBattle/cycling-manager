@@ -35,6 +35,7 @@ function openRider(id) { state.rid = id; go(state.menu, 'rider'); }
 document.addEventListener('click', (e) => { const a = e.target.closest('[data-rider]'); if (a) { e.preventDefault(); openRider(a.dataset.rider); } });
 
 async function renderRider(c) {
+  const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const g = state.game, mine = state.team.id, mineIds = myTeamIds();
   const { data: r0, error } = await sb.from('riders').select('*').eq('id', state.rid || '').maybeSingle();
@@ -118,7 +119,7 @@ async function renderRider(c) {
         <div class="stat-row"><span>Réputation<small>${deep ? rep + ' sur 5' : ''}</small></span><b>${deep ? REPUTATIONS[rep - 1] : '?'}</b></div>
         <div class="stat-row"><span>Personnalité</span><b>${deep ? esc(traits.join(', ')) : '?'}</b></div>
         <div class="stat-row"><span>Spécialité</span><b>${SPEC_NAMES[r.spec]}</b></div>
-        <div class="legend"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
+        ${langHTML}<div class="legend"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
     </div>
     <div class="scards">
       ${card("État d'esprit", known ? `<div class="mo ${moodCls} big">${mood}</div><div class="muted">Points positifs ${pos.length} · négatifs ${neg.length}</div><small>${pos.concat(neg).map(esc).join('<br>')}</small>` : hid)}

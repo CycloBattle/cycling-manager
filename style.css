@@ -267,3 +267,10 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .re-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:.4rem; }
 .re-av { display:inline-block; } .re-av .rav, .re-av .avatar-img-wrap { width:28px; height:28px; font-size:.7rem; border-radius:50%; }
 @media (max-width:1100px) { .rd-grid { grid-template-columns:1fr; grid-template-areas:"profile" "side" "instr" "bottom" "radio"; } }
+
+.res-top { display:grid; grid-template-columns:repeat(3,1fr); gap:.75rem; }
+.res-pod { background:#1f2937; border:1px solid #374151; border-radius:8px; padding:.8rem; text-align:center; } .res-pod b { display:block; font-size:1.05rem; margin:.2rem 0; } .res-pod .pos { font-size:1.6rem; font-weight:800; color:#f9a8d4; }
+.sp-track { position:relative; background:#0b1020; border:1px solid #374151; border-radius:8px; height:250px; overflow:hidden; margin-bottom:.4rem; }
+.sp-r { position:absolute; left:0; height:24px; display:flex; align-items:center; gap:.4rem; padding:0 .7rem; border-radius:99px; background:#4c1d95; color:#fff; font-size:.75rem; white-space:nowrap; } .sp-r.mine { background:#db2777; } .sp-n { font-weight:800; }
+.sp-line { position:absolute; right:12px; top:0; bottom:0; width:6px; background:repeating-linear-gradient(#fff 0 6px,#111 6px 12px); }
+@media (max-width:700px) { .res-top { grid-template-columns:1fr; } }

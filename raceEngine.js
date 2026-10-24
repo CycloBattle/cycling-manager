@@ -323,17 +323,3 @@ async function renderLiveRaceDashboard(c) {
   }, 200);
   upd();
 }
-  const root = $('re-root');
-  root.onclick = (e) => {
-    const sp = e.target.closest('[data-resp]'), at = e.target.closest('[data-reatk]'), bo = e.target.closest('[data-rebot]');
-    if (sp) { if (sp.dataset.resp === 'skip') reSkipToFinal(S); else S.speed = +sp.dataset.resp; upd(); }
-    else if (at) { toast(reAttack(S, at.dataset.reatk)); upd(); } else if (bo) { toast(reSendForBottles(S, bo.dataset.rebot)); upd(); }
-  };
-  root.onchange = (e) => { const p = e.target.closest('[data-replace]'); if (p) { const r = S.riders[p.dataset.replace]; r.order = p.value || null; if (p.value) r.place = p.value; upd(); } };
-  $('re-race').onchange = (e) => { state.simRace = e.target.value; renderRaceLive(c); };
-  state.reTimer = setInterval(() => {   // boucle de tick : 200 ms réelles = 12 s de course à x1
-    if (!$('re-root')) { clearInterval(state.reTimer); state.reTimer = null; return; }
-    if (S.speed > 0 && !S.done) { reAdvance(S, 0.2 * RE.BASE * S.speed); upd(S.tick++ % 5 === 0 && document.activeElement?.tagName !== 'SELECT'); }
-  }, 200);
-  upd();
-}

@@ -43,7 +43,7 @@ function reAutoPlace(S, g, act) {   // placement : les meilleurs se placent à l
 function createRaceState(race, profile, field, car = 0) {
   const rng = simRng(String(race.id) + ':' + Date.now());
   const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, gly: 100, bottles: 2, slip: 0, order: null, fed: [], drop: false }]));
-  const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false,
+  const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,,
     temp: Math.round(8 + rng() * 18), order: null, wind: 15 + rng() * 25, head: (rng() - 0.5) * 8, wet: rng() < 0.12, groups: [{ id: 'g0', type: 'PELOTON', km: 0, v: 0, tempo: 0.92, riders: field.map((r) => r.id), gap: 0, born: 0, finished: false }] };
   reLog(S, `Départ de ${race.name} : ${field.length} coureurs, ${profile.km} km${S.wet ? ', route mouillée' : ''}.`); return S;
 }
@@ -70,7 +70,7 @@ function reStep(S, dt = RE.DT) {
     const chasing = g.type === 'PELOTON' && S.groups.some((x) => x.type === 'BREAK' && !x.finished && x.riders.length) && g.gap >= 15 && g.gap <= 420;
     g.tempo = g.type === 'PELOTON' ? (chasing ? 0.975 : left < 30 ? 1 : 0.92) : g.type === 'BREAK' ? 0.99 : g.type === 'CHASE' ? 1 : g.chase ? 1.03 : 0.88;
     if (g.type === 'PELOTON' && S.order?.id === 'TEMPO' && S.t <= S.order.until && act.filter((r) => r.mine && r.place === 'FRONT').length >= 2) g.tempo = Math.max(g.tempo, 0.965);
-    const v = reClamp(motor * g.tempo * (zone.wind ? 0.985 : 1) * (1 - S.head * 0.004), 8, 82); g.v = v; g.km += (v * dt) / 3600;
+    const v = reClamp(motor * g.tempo * (zone.wind ? 0.985 : 1) * (1 - S.head * 0.004) * reSprintBoost(S, g, act), 8, 82); g.v = v; g.km += (v * dt) / 3600;
     if (Math.round(S.t / dt) % 6 === 0) reAutoPlace(S, g, act);
 
     for (const r of act) {   // effort (pente, vent, abri) → stamina, énergie d'attaque, hydratation / glycogène
@@ -116,7 +116,7 @@ function reIncident(S, g, r, kind, dur) {
   const hit = [r];
   if (kind === 'CRASH') g.riders.filter((i) => i !== r.id).forEach((i) => { const o = S.riders[i]; if (o.status === 'RACE' && hit.length < 4 && S.rng() < 0.04) hit.push(o); });
   hit.forEach((x) => {
-    g.riders = g.riders.filter((i) => i !== x.id); x.group = null; x.km = g.km; x.until = S.t + Math.max(25, dur); x.status = kind;
+    g.riders = g.riders.filter((i) => i !== x.id); x.group = null; (x.inc = x.inc || []).push(kind === 'PUNCT' ? 'PUNCTURE' : 'CRASH'); x.km = g.km;; x.until = S.t + Math.max(25, dur); x.status = kind;
     if (kind === 'CRASH') { x.stam = Math.max(0, x.stam - 12); if (S.rng() < 0.25) { x.status = 'DNF'; reLog(S, `Abandon sur chute de ${x.name} (${x.team}).`, x.mine); } }
   });
   reLog(S, kind === 'PUNCT' ? `Crevaison pour ${r.name} (${r.team}).` : `Chute : ${hit.map((x) => x.name).join(', ')}.`, hit.some((x) => x.mine));
@@ -128,6 +128,7 @@ function reSolos(S, dt) {   // coureurs hors groupe : crevaison / chute en cours
     if (r.status === 'CAR') { r.km += ((r.gv || 38) * 0.9 * dt) / 3600; if (S.t >= r.until) { reDeliver(S, r); r.status = 'RETURN'; } continue; }
     if (r.status !== 'RETURN') continue;
     const v = reCap(r, reSlope(P, r.km), reZone(P, r.km)) * 1.08; r.km += (v * dt) / 3600; r.alone = (r.alone || 0) + dt;
+      if (r.km >= S.profile.km) { reNewGroup(S, 'DROPPED', S.profile.km, [r], 0.88); continue; }
     r.stam = Math.max(0, r.stam - (0.33 * 1.2 ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60); r.gly = Math.max(0, r.gly - (0.4 * dt) / 60);
     const g2 = S.groups.find((g) => !g.finished && g.riders.length && Math.abs(g.km - r.km) < 0.15);
     if (g2) { g2.riders.push(r.id); r.group = g2.id; r.status = 'RACE'; r.alone = 0; r.slip = 0; if (r.mine) reLog(S, `${r.name} est revenu dans le groupe.`, true); }
@@ -166,16 +167,135 @@ function reAutoAttacks(S, dt) {   // attaques des équipes adverses : échappée
   const pick = act.filter((r) => r.atk > 60).map((r) => [r, r.atk + r.flat + r.mountain + S.rng() * 60]).sort((a, b) => b[1] - a[1]).slice(0, 1 + Math.floor(S.rng() * (early ? 5 : 3))).map((x) => x[0]);
   if (pick.length) reAttackIds(S, p, pick);
 }
-function reFinish(S, g) {   // sprint : sprint, énergie, stamina, placement
+/* ===== Fin de course : emballage final, classements, primes, sauvegarde ===== */
+const RE_UCI = [100, 70, 50, 40, 30, 25, 20, 15, 10, 8, 6, 5, 4, 3, 2];
+const RE_PRIZE = [8000, 4000, 2000, 1500, 1000, 700, 500, 400, 300, 200];
+const RE_KOM = { HC: [20, 15, 12, 10, 8, 6, 4, 2], 1: [10, 8, 6, 4, 2, 1], 2: [5, 3, 2, 1], 3: [2, 1], 4: [1] };
+const RE_CAT = { '1.1': 1, '1.Pro': 1.4, '1.UWT': 2, '2.1': 0.7, '2.Pro': 1.5, '2.UWT': 2.5 };   // barème selon la catégorie de la course
+
+// 5 derniers km : le groupe accélère par paliers (5 km, 2 km, 300 m) selon la qualité de son meilleur sprinteur (sprint + accélération)
+function reSprintBoost(S, g, act) {
+  const left = S.profile.km - g.km; if (left > 5 || left < 0 || act.length < 2 || g.type === 'DROPPED') return 1;
+  const q = Math.max(...act.map((r) => (r.sprint + r.acc) / 2)), phase = left > 2 ? 0.05 : left > 0.3 ? 0.11 : 0.17;
+  return 1 + phase * (0.7 + (q - 50) / 100);
+}
+// Emballage : dans chaque équipe, le meilleur rouleur devient poisson-pilote et lance le meilleur sprinteur (ordre « Préparer le train » pour votre équipe)
+function reBunchLog(S, g, act) {
+  if (S.bunch || S.profile.km - g.km > 5 || act.length < 6) return;
+  S.bunch = { gid: g.id }; const by = {}; let trains = 0;
+  act.forEach((r) => (by[r.teamId] = by[r.teamId] || []).push(r));
+  Object.values(by).forEach((rs) => {
+    if (rs.length < 2) return;
+    const sp = (rs[0].mine && S.order?.id === 'TRAIN' && rs.find((r) => r.id === S.order.leader)) || [...rs].sort((a, b) => b.sprint - a.sprint)[0];
+    const pilot = rs.filter((r) => r !== sp && r.stam > 30).sort((a, b) => b.flat + b.stamina - (a.flat + a.stamina))[0];
+    if (!pilot) return;
+    sp.led = reClamp((pilot.flat + pilot.stamina) / 160 - 0.35, 0.1, 0.8);                     // qualité du poisson-pilote
+    pilot.stam = Math.max(0, pilot.stam - 8); pilot.atk = Math.max(0, pilot.atk - 25); pilot.pilot = true; trains++;
+    if (sp.mine || pilot.mine) reLog(S, `Train de ${pilot.team} : ${pilot.name} lance ${sp.name}.`, true);
+  });
+  reLog(S, `Emballage final : ${act.length} coureurs à moins de 5 km de l'arrivée, ${trains} train(s) organisé(s).`);
+}
+// Sprints intermédiaires et cols : points au premier groupe qui passe (maillots des sprints et de la montagne)
+function reCheckpoints(S, g, prev) {
+  const P = S.profile, act = g.riders.map((i) => S.riders[i]).filter((r) => r.status === 'RACE'); if (!act.length) return;
+  const best = (key, n) => act.map((r) => [r, r[key] * (0.5 + r.atk / 200) + (S.rng() - 0.5) * 8]).sort((a, b) => b[1] - a[1]).slice(0, n).map((x) => x[0]);
+  const give = (map, list, pts) => list.forEach((r, i) => (map[r.id] = (map[r.id] || 0) + pts[i]));
+  P.sprints.forEach((s, i) => {
+    if (S.passed['S' + i] || !(prev < s.km && g.km >= s.km)) return; S.passed['S' + i] = 1;
+    const top = best('sprint', 3); give(S.pts.sprint, top, [12, 8, 5]); top.forEach((r) => (r.atk = Math.max(0, r.atk - 6)));
+    reLog(S, `Sprint intermédiaire n°${i + 1} : ${top[0].name} (${top[0].team}) passe en tête.`, top.some((r) => r.mine));
+  });
+  P.climbs.forEach((c, i) => {
+    if (S.passed['C' + i] || !(prev < c.km && g.km >= c.km)) return; S.passed['C' + i] = 1;
+    const pts = RE_KOM[c.cat] || [1], top = best('mountain', pts.length); give(S.pts.kom, top, pts);
+    reLog(S, `Col de ${c.cat === 'HC' ? 'hors catégorie' : 'catégorie ' + c.cat} (km ${c.km.toFixed(0)}) : ${top[0].name} (${top[0].team}) passe en tête.`, top.some((r) => r.mine));
+  });
+}
+// Score de sprint : sprint, accélération, énergie, stamina, placement (Avant / Milieu / Arrière) et poisson-pilote
+function reSprintScore(S, r) {
+  const place = { FRONT: 1.05, MID: 1, BACK: 0.92 }[r.place] || 1, pil = r.led ? 1 + 0.08 * r.led : 1, ord = S.order?.id === 'TRAIN' && r.id === S.order.leader ? 1.07 : 1;
+  const base = (r.sprint * 0.65 + r.acc * 0.35) * (0.55 + (0.45 * r.atk) / 100) * (0.6 + (0.4 * r.stam) / 100) * place * pil * ord;
+  return { score: base * (0.92 + 0.16 * S.rng()), parts: { sprint: r.sprint, acc: r.acc, place: r.place, pilot: r.led ? +(r.led * 8).toFixed(1) : 0 } };
+}
+function reFinish(S, g) {
   const total = S.profile.km, act = g.riders.map((id) => S.riders[id]).filter((r) => r.status === 'RACE');
-  const sc = (r) => r.sprint * (0.55 + (0.45 * r.atk) / 100) * (0.6 + (0.4 * r.stam) / 100) * { FRONT: 1.05, MID: 1, BACK: 0.92 }[r.place] * (S.order?.id === 'TRAIN' && r.id === S.order.leader ? 1.07 : 1) * (0.9 + 0.2 * S.rng());
-  const t0 = S.t - ((g.km - total) / Math.max(g.v, 1)) * 3600; act.sort((a, b) => sc(b) - sc(a));
-  act.forEach((r, i) => { r.status = 'FIN'; S.results.push({ id: r.id, name: r.name, team: r.team, mine: r.mine, pos: S.results.length + 1, time: Math.round(t0 + i * 0.1) }); });
-  g.finished = true; g.riders = []; if (act[0]) reLog(S, `Arrivée : ${act[0].name} (${act[0].team}) s'impose${S.results.length === act.length ? '' : ' pour le groupe'}.`, act.some((r) => r.mine));
+  const t0 = S.t - ((g.km - total) / Math.max(g.v, 1)) * 3600, sc = act.map((r) => ({ r, ...reSprintScore(S, r) })).sort((a, b) => b.score - a.score);
+  if (sc.length >= 3 && (!S.sprint || sc.length > S.sprint.n)) S.sprint = { n: sc.length, order: sc.slice(0, 10).map((x) => ({ id: x.r.id, name: x.r.name, team: x.r.team, mine: x.r.mine, score: x.score, parts: x.parts })) };
+  sc.forEach(({ r }, i) => { r.status = 'FIN'; S.results.push({ id: r.id, name: r.name, team: r.team, teamId: r.teamId, mine: r.mine, time: Math.round(t0 + i * 0.1), inc: r.inc || [], stam: r.stam }); });
+  g.finished = true; g.riders = [];
+  if (sc[0]) reLog(S, `Arrivée : ${sc[0].r.name} (${sc[0].r.team}) s'impose${sc.length > 1 ? ' au sprint' : ' en solitaire'}.`, sc.some((x) => x.r.mine));
+}
+
+// Classements final, maillots, points UCI et primes
+function reBuildResults(S) {
+  const scale = RE_CAT[S.race.category] || 1, fin = [...S.results].sort((a, b) => a.time - b.time).map((r, i) => ({ ...r, pos: i + 1 }));
+  const gone = Object.values(S.riders).filter((r) => !fin.some((x) => x.id === r.id)).map((r, i) => ({ id: r.id, name: r.name, team: r.team, teamId: r.teamId, mine: r.mine, dnf: true, inc: [...(r.inc || []), 'DNF'], stam: r.stam, pos: fin.length + i + 1 }));
+  fin.forEach((r) => { r.gap = r.time - fin[0].time; r.uci = Math.round((RE_UCI[r.pos - 1] || 0) * scale); r.prize = Math.round((RE_PRIZE[r.pos - 1] || 0) * scale); });
+  const top = (m) => Object.entries(m).sort((a, b) => b[1] - a[1]).map(([id, pts]) => ({ id, pts, name: S.riders[id].name, team: S.riders[id].team, mine: S.riders[id].mine }));
+  const sprint = top(S.pts.sprint), kom = top(S.pts.kom);
+  [sprint[0], kom[0]].forEach((j) => { const r = j && fin.find((x) => x.id === j.id); if (r) r.prize += 500; });   // prime de maillot
+  const teams = {}; [...fin, ...gone].forEach((r) => { const t = (teams[r.team] = teams[r.team] || { team: r.team, uci: 0, prize: 0, mine: r.mine }); t.uci += r.uci || 0; t.prize += r.prize || 0; });
+  return { fin, gone, all: [...fin, ...gone], sprint, kom, teams: Object.values(teams).sort((a, b) => b.uci - a.uci || b.prize - a.prize) };
+}
+function reSummary(S, R) {
+  const w = R.fin[0], L = S.log, n = (k) => L.filter((l) => l.text.startsWith(k)).length, atk = L.find((l) => l.text.startsWith('Attaque')), mine = R.fin.find((r) => r.mine);
+  return [`${S.race.name} : ${w.name} (${w.team}) s'impose${S.sprint ? ' au sprint' : ''}.`, `Podium : ${R.fin.slice(0, 3).map((r) => `${r.pos}. ${r.name} (${r.team})`).join(' · ')}.`,
+    atk ? `Fait de course : ${atk.text}` : 'Course contrôlée par le peloton.', `${n('Crevaison')} crevaison(s), ${n('Chute')} chute(s), ${n('Fringale')} fringale(s), ${R.gone.length} abandon(s).`,
+    R.sprint[0] ? `Maillot des sprints : ${R.sprint[0].name} (${R.sprint[0].pts} pts).` : '', R.kom[0] ? `Meilleur grimpeur : ${R.kom[0].name} (${R.kom[0].pts} pts).` : '',
+    mine ? `Votre équipe : meilleur résultat ${mine.pos}e avec ${mine.name}.` : "Votre équipe n'a pas terminé dans le classement."].filter(Boolean).join('\n');
+}
+// Sauvegarde : race_results, race_summaries, points UCI et budget des équipes, fatigue des coureurs (coureurs réels uniquement)
+async function saveRaceResults(S, R, P) {
+  const real = R.all.filter((r) => /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(r.id));
+  const results = real.map((r) => ({ rider_id: r.id, position: r.pos, gap: r.gap || 0, uci: r.uci || 0, prize: r.prize || 0, incident: (r.inc || [])[0] || null }));
+  const fatigue = Object.fromEntries(real.map((r) => [r.id, r.dnf ? 35 : Math.round(12 + (100 - (r.stam ?? 60)) * 0.3 + P.km / 25)]));
+  const { error } = await sb.rpc('save_race_results', { p_race: S.race.id, p_results: results, p_summary: reSummary(S, R), p_fatigue: fatigue });
+  if (error) return error.message;
+  const { data: t } = await sb.from('teams').select('*').eq('id', state.team.id).single(); if (t) state.team = t;
+  await loadGame(); S.saved = true; return null;
+}
+
+async function renderRaceResults(c, S, P) {
+  const R = reBuildResults(S), mine = R.all.filter((r) => r.mine);
+  if (!R.fin.length) { c.innerHTML = '<div class="panel"><h4>Résultats</h4><p class="muted">Aucun coureur n\'a terminé la course.</p></div>'; return; }
+  let tab = state.resTab || 'gc';
+  const gapT = (g) => (g > 0 ? `+${Math.floor(g / 60)}'${String(g % 60).padStart(2, '0')}"` : ''), tbl = (h, rows) => `<div class="tbl"><table class="fm sq"><thead><tr>${h.map((x) => `<th>${x}</th>`).join('')}</tr></thead><tbody>${rows.join('') || '<tr><td colspan="6" class="muted">Aucune donnée.</td></tr>'}</tbody></table></div>`;
+  const rowGc = (r) => `<tr class="${r.mine ? 'me' : ''}"><td>${r.pos}</td><td>${esc(r.name)}</td><td>${esc(r.team)}</td><td>${r.dnf ? 'Abandon' : r.pos === 1 ? reClock(R.fin[0].time) : gapT(r.gap)}</td><td>${r.uci ? r.uci + ' pts' : '-'}</td><td>${r.prize ? fmtEUR(r.prize) : '-'}</td></tr>`;
+  const rowJ = (x, i) => `<tr class="${x.mine ? 'me' : ''}"><td>${i + 1}</td><td>${esc(x.name)}</td><td>${esc(x.team)}</td><td>${x.pts} pts</td></tr>`;
+  const bodies = {
+    gc: () => tbl(['Pos.', 'Coureur', 'Équipe', 'Temps / écart', 'Points UCI', 'Prime'], R.all.map(rowGc)), mine: () => tbl(['Pos.', 'Coureur', 'Équipe', 'Temps / écart', 'Points UCI', 'Prime'], mine.map(rowGc)),
+    sprint: () => tbl(['#', 'Coureur', 'Équipe', 'Points'], R.sprint.map(rowJ)), kom: () => tbl(['#', 'Coureur', 'Équipe', 'Points'], R.kom.map(rowJ)),
+    teams: () => tbl(['#', 'Équipe', 'Points UCI', 'Primes'], R.teams.map((t, i) => `<tr class="${t.mine ? 'me' : ''}"><td>${i + 1}</td><td>${esc(t.team)}</td><td>${t.uci} pts</td><td>${fmtEUR(t.prize)}</td></tr>`)),
+  };
+  const spr = () => { const o = (S.sprint?.order || []).slice(0, 8); if (!o.length) return '<p class="muted">Arrivée en solitaire : pas de sprint.</p>'; const best = o[0].score;
+    return `<div class="sp-track">${o.map((x, i) => `<div class="sp-r ${x.mine ? 'mine' : ''}" data-dur="${(2.4 + ((best - x.score) / best) * 12).toFixed(2)}" style="top:${i * 28 + 8}px"><span class="sp-n">${i + 1}</span>${esc(x.name)}</div>`).join('')}<div class="sp-line"></div></div>
+      <div class="muted" style="font-size:.78rem">${o.slice(0, 3).map((x) => `${esc(x.name)} : sprint ${x.parts.sprint}, accélération ${x.parts.acc}, placement ${RE.PLACES[x.parts.place] || x.parts.place}${x.parts.pilot ? ', poisson-pilote +' + x.parts.pilot + ' %' : ''}`).join(' · ')}</div>`; };
+  const play = () => requestAnimationFrame(() => { const els = c.querySelectorAll('.sp-r'); els.forEach((e) => { e.style.transition = 'none'; e.style.left = '0'; }); requestAnimationFrame(() => els.forEach((e) => { e.style.transition = `left ${e.dataset.dur}s cubic-bezier(.25,.8,.3,1)`; e.style.left = 'calc(100% - 170px)'; })); });
+  const draw = () => {
+    c.innerHTML = `<div class="panel"><h4>Résultats : ${esc(S.race.name)}</h4><div class="muted">${P.km} km · temps du vainqueur ${reClock(R.fin[0].time)} · ${R.fin.length} arrivé(s), ${R.gone.length} abandon(s)</div>
+      <div class="res-top" style="margin-top:.7rem">${R.fin.slice(0, 3).map((r) => `<div class="res-pod"><div class="pos">${r.pos}</div><b>${esc(r.name)}</b><div class="muted">${esc(r.team)}</div><div>${r.uci} pts UCI · ${fmtEUR(r.prize)}</div></div>`).join('')}</div>
+      <div class="stat-row"><span>Votre équipe : points UCI gagnés</span><b>${mine.reduce((s, r) => s + (r.uci || 0), 0)} pts</b></div><div class="stat-row"><span>Votre équipe : primes</span><b>${fmtEUR(mine.reduce((s, r) => s + (r.prize || 0), 0))}</b></div>
+      <div class="muted" id="res-save" style="margin-top:.4rem">${S.saved ? 'Résultats enregistrés : classement UCI et fatigue mis à jour.' : 'Enregistrement des résultats…'}</div>
+      <div class="rov-btns"><button data-resnew>Course suivante</button></div></div>
+    <div class="panel" style="margin-top:.75rem"><h4>Sprint final</h4>${spr()}<div class="rov-btns"><button data-resprint>Rejouer le sprint</button></div></div>
+    <div class="panel" style="margin-top:.75rem"><div class="tabs">${[['gc', 'Classement général'], ['sprint', 'Maillot des sprints'], ['kom', 'Maillot de la montagne'], ['mine', 'Mon équipe'], ['teams', 'Équipes']].map(([k, l]) => `<button data-restab="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>${bodies[tab]()}</div>`;
+    play();
+  };
+  c.onclick = (e) => {
+    const t = e.target.closest('[data-restab]');
+    if (t) { tab = state.resTab = t.dataset.restab; draw(); } else if (e.target.closest('[data-resprint]')) play(); else if (e.target.closest('[data-resnew]')) go('portal', 'competitions');
+  };
+  draw();
+  if (!S.saved && !S.saving) {
+    S.saving = true;
+    const err = await saveRaceResults(S, R, P), el = $('res-save');
+    if (el) el.textContent = err ? `Résultats non enregistrés : ${err}` : 'Résultats enregistrés : classement UCI, primes, fatigue et résumé de course mis à jour.';
+    toast(err ? err : 'Résultats enregistrés.');
+  }
 }
 
 const reMake = (r, t, mine) => ({ id: r.id, photo_url: r.photo_url, photo_crop: r.photo_crop, name: `${r.first_name} ${r.last_name}`, team: t.official_name || t.name, teamId: t.id, mine, level: r.level, flat: r.flat || 60, mountain: r.mountain || 60,
-  hills: r.hills || 60, time_trial: r.time_trial || 60, sprint: r.sprint || 60, cobbles: r.cobbles || 60, stamina: r.stamina || 60, recovery: r.recovery || 60, wheels: 0,
+  hills: r.hills || 60, time_trial: r.time_trial || 60, sprint: r.sprint || 60, acc: r.acc || r.sprint || 60, cobbles: r.cobbles || 60, stamina: r.stamina || 60, recovery: r.recovery || 60, wheels: 0,
   stam: 100 - (r.fatigue || 0) * 0.4,   // forme et fatigue issues de l'entraînement ; bonus du staff (stratégie de course) pour votre équipe
   boost: reClamp((r.fitness ?? 70) / 70, 0.9, 1.08) * (mine && typeof calculateStaffImpact === 'function' ? calculateStaffImpact(state.team.id, r).raceBonus : 1) });
 
@@ -196,7 +316,7 @@ async function buildRaceField(race) {
   const rng = simRng(String(race.id) + 'field'), teams = ['Alba', 'Borea', 'Cassini', 'Delta', 'Eolia', 'Fenix', 'Garona', 'Helios', 'Ivoire', 'Jura'], need = Math.max(0, 90 - riders.length);
   for (let i = 0; i < need; i++) {   // peloton complété par des coureurs fictifs
     const q = 52 + rng() * 22, f = (b) => reClamp(q + (rng() - 0.5) * b, 45, 82);
-    riders.push({ id: 'f' + i, name: `Coureur ${i + 1}`, team: `Équipe ${teams[i % teams.length]}`, teamId: 'f', mine: false, level: q, flat: f(12), mountain: f(14), hills: f(12), time_trial: f(12), sprint: f(16), cobbles: f(12), stamina: f(12), recovery: f(12), stam: 100, boost: 1, wheels: 0 });
+    riders.push({ id: 'f' + i, name: `Coureur ${i + 1}`, team: `Équipe ${teams[i % teams.length]}`, teamId: 'f', mine: false, level: q, flat: f(12), mountain: f(14), hills: f(12), time_trial: f(12), sprint: f(16), acc: f(16),, cobbles: f(12), stamina: f(12), recovery: f(12), stam: 100, boost: 1, wheels: 0 });
   }
   return { riders, car: (inf.data || []).find((x) => x.type === 'VEHICLES')?.level || 0 };
 }

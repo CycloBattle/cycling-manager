@@ -43,7 +43,7 @@ function reAutoPlace(S, g, act) {   // placement : les meilleurs se placent à l
 function createRaceState(race, profile, field, car = 0) {
   const rng = simRng(String(race.id) + ':' + Date.now());
   const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, gly: 100, bottles: 2, slip: 0, order: null, fed: [], drop: false }]));
-  const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,,
+  const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,
     temp: Math.round(8 + rng() * 18), order: null, wind: 15 + rng() * 25, head: (rng() - 0.5) * 8, wet: rng() < 0.12, groups: [{ id: 'g0', type: 'PELOTON', km: 0, v: 0, tempo: 0.92, riders: field.map((r) => r.id), gap: 0, born: 0, finished: false }] };
   reLog(S, `Départ de ${race.name} : ${field.length} coureurs, ${profile.km} km${S.wet ? ', route mouillée' : ''}.`); return S;
 }

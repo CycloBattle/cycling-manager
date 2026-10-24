@@ -274,7 +274,7 @@ function viewGame() {
 
 async function renderTab() {
   const c = $('content'), tab = state.tab;
-  if (tab === 'competitions') return renderRaceLive(c);
+  if (tab === 'competitions') return renderLiveRaceDashboard(c);
   if (tab === 'rider') return renderRider(c);
   if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);

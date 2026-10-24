@@ -258,3 +258,12 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .re-l { padding:.3rem 0; border-bottom:1px solid var(--line); } .re-l span { display:block; color:var(--muted); font-size:.7rem; }
 .re-l.mine { border-left:3px solid #db2777; padding-left:.4rem; }
 .re-speed button.on { background:#db2777; }
+
+.rd-grid { display:grid; grid-template-columns:270px minmax(0,1fr) 270px; grid-template-areas:"instr profile side" "radio bottom side"; gap:.75rem; align-items:start; }
+.rd-instr { grid-area:instr; } .rd-profile { grid-area:profile; } .rd-radio { grid-area:radio; } .rd-bottom { grid-area:bottom; } .rd-side { grid-area:side; }
+.rd-grid > .panel { margin-top:0 !important; }
+.rd-orders { display:grid; gap:.4rem; } .rd-orders button { text-align:left; padding:.5rem .7rem; font-size:.85rem; background:#1f2937; border:1px solid #374151; } .rd-orders button:hover { border-color:#a78bfa; }
+.re-col { display:grid; gap:.35rem; margin-top:.5rem; } .re-col button { font-size:.8rem; padding:.4rem .6rem; background:#1f2937; border:1px solid #374151; } .re-col button.on { background:#db2777; border-color:#f472b6; }
+.re-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:.4rem; }
+.re-av { display:inline-block; } .re-av .rav, .re-av .avatar-img-wrap { width:28px; height:28px; font-size:.7rem; border-radius:50%; }
+@media (max-width:1100px) { .rd-grid { grid-template-columns:1fr; grid-template-areas:"profile" "side" "instr" "bottom" "radio"; } }

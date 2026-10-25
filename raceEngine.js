@@ -3,13 +3,13 @@
 const RE = { BASE: 60, DT: 10, PLACES: { FRONT: 'Avant', MID: 'Milieu', BACK: 'Arrière' }, SHELTER: { FRONT: 1, MID: 0.7, BACK: 0.65 } };   // BASE : secondes de course par seconde réelle à x1 ; abri dans la roue : -30 % d'effort
 const reClamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const reClock = (s) => `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}'${String(Math.floor(s % 60)).padStart(2, '0')}"`;
-const reSlope = (P, km) => ((profileAlt(P, km + 0.1) - profileAlt(P, Math.max(0, km - 0.1))) / 200) * 100;                       // pente en %
+const reSlope = (P, km) => ((profileAlt(P, km + 0.1) - profileAlt(P, Math.max(0, km - 0.1))) / 200) * 100;                        // pente en %
 const reZone = (P, km) => ({ cobble: P.cobbles.some((c) => km >= c.from && km <= c.to), wind: P.wind.find((w) => km >= w.from && km <= w.to) || null });
 const reAhead = (P, km) => P.km - km < 6 || P.cobbles.some((c) => c.from > km && c.from - km < 4) || P.wind.some((w) => w.from > km && w.from - km < 4) || P.climbs.some((c) => c.start > km && c.start - km < 2);
 const reLeadKm = (S) => { const k = S.groups.filter((g) => !g.finished && g.riders.length).map((g) => g.km); return k.length ? Math.max(...k) : S.profile.km; };
 function reLog(S, text, mine = false) { S.log.push({ t: S.t, km: reLeadKm(S), text, mine }); if (S.log.length > 250) S.log.shift(); }
 
-// Vitesse soutenable du coureur selon la pente (puissance en W/kg), l'aérodynamisme, les pavés, la fatigue, la fringale et sa forme
+// Vitesse soutenable du coureur selon la pente (puissance en W/kg), l'aérodynamisme, les pavés, la fatigue et sa forme
 function reCap(r, slope, zone) {
   const s = Math.max(0, slope), st = s >= 5 ? r.mountain : s >= 2.5 ? (r.mountain + r.hills) / 2 : r.hills, wkg = 4.6 + (st - 50) * 0.06;
   const aero = 44 + (r.flat - 50) * 0.2 + (zone.cobble ? (r.cobbles - 60) * 0.1 - 6 : 0);
@@ -42,7 +42,7 @@ function reAutoPlace(S, g, act) {   // placement : les meilleurs se placent à l
 
 function createRaceState(race, profile, field, car = 0) {
   const rng = simRng(String(race.id) + ':' + Date.now());
-    const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, slip: 0, order: null, drop: false }]));
+  const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, slip: 0, order: null, drop: false }]));
   const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,
     temp: Math.round(8 + rng() * 18), order: null, wind: 15 + rng() * 25, head: (rng() - 0.5) * 8, wet: rng() < 0.12, groups: [{ id: 'g0', type: 'PELOTON', km: 0, v: 0, tempo: 0.92, riders: field.map((r) => r.id), gap: 0, born: 0, finished: false }] };
   reLog(S, `Départ de ${race.name} : ${field.length} coureurs, ${profile.km} km${S.wet ? ', route mouillée' : ''}.`); return S;
@@ -73,7 +73,7 @@ function reStep(S, dt = RE.DT) {
     const v = reClamp(motor * g.tempo * (zone.wind ? 0.985 : 1) * (1 - S.head * 0.004) * reSprintBoost(S, g, act), 8, 82); g.v = v; g.km += (v * dt) / 3600;
     if (Math.round(S.t / dt) % 6 === 0) reAutoPlace(S, g, act);
 
-    for (const r of act) {   // effort (pente, vent, abri) → stamina, énergie d'attaque, hydratation / glycogène
+    for (const r of act) {   // effort (pente, vent, abri) → stamina, énergie d'attaque
       const cap = reCap(r, slope, zone), sh = 1 - (1 - RE.SHELTER[r.place]) * (slope > 6 ? 0.35 : 1), eff = (v / cap) ** 2 * sh * (g.chase ? 1.1 : 1) * reOrderEff(S, r, g);
       r.stam = reClamp(r.stam - (0.33 * eff ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60 + (eff < 0.6 ? ((0.6 - eff) * 0.35 * (r.recovery / 60) * dt) / 60 : 0), 0, 100);
       if (eff > 1.05) r.atk = Math.max(0, r.atk - ((eff - 1.05) * 1.6 * dt) / 10); else if (eff < 0.9) r.atk = Math.min(100, r.atk + (0.05 * (r.recovery / 60) * dt) / 10);
@@ -297,7 +297,7 @@ async function buildRaceField(race) {
     sel.forEach((r) => riders.push(reMake(r, t, t.id === myId)));
   }
   const rng = simRng(String(race.id) + 'field'), teams = ['Alba', 'Borea', 'Cassini', 'Delta', 'Eolia', 'Fenix', 'Garona', 'Helios', 'Ivoire', 'Jura'], need = Math.max(0, 90 - riders.length);
-  for (let i = 0; i < need; i++) {   // peloton complété par des coureurs fictifs
+  for (let i = 0; i < need; i++) {
     const q = 52 + rng() * 22, f = (b) => reClamp(q + (rng() - 0.5) * b, 45, 82);
     riders.push({ id: 'f' + i, name: `Coureur ${i + 1}`, team: `Équipe ${teams[i % teams.length]}`, teamId: 'f', mine: false, level: q, flat: f(12), mountain: f(14), hills: f(12), time_trial: f(12), sprint: f(16), acc: f(16), cobbles: f(12), stamina: f(12), recovery: f(12), stam: 100, boost: 1, wheels: 0 });
   }
@@ -306,118 +306,61 @@ async function buildRaceField(race) {
 
 /* ===== Consignes collectives et rôles ===== */
 const RE_ORDERS = { PROTECT: 'Protéger le leader', TRAIN: 'Préparer le train', ATTACK: 'Attaquer', TEMPO: 'Rouler en tête', FRONT: 'Frotter en tête' };
+const RE_ROLE_LABEL = { LEADER: 'Leader', SPRINTER: 'Sprinteur', DOMESTIQUE: 'Équipier' };
 const reMine = (S) => Object.values(S.riders).filter((r) => r.mine && r.status === 'RACE' && r.group);
-function reRoles(S) {   // rôles automatiques : leader = meilleur niveau, sprinteur = meilleur sprint parmi les autres
-  const mine = Object.values(S.riders).filter((r) => r.mine && !['DNF', 'FIN'].includes(r.status)), lead = [...mine].sort((a, b) => b.level - a.level)[0];
-  const spr = [...mine].filter((r) => r !== lead).sort((a, b) => b.sprint - a.sprint)[0];
-  mine.forEach((r) => { r.autoRole = r === lead ? 'LEADER' : r === spr && spr.sprint > 66 ? 'SPRINTER' : 'DOM'; });
+
+function reRoles(S) {
+  const mine = Object.values(S.riders).filter((r) => r.mine && !['DNF', 'FIN'].includes(r.status));
+  if (!mine.length) return;
+  const sortedLevel = [...mine].sort((a, b) => b.level - a.level);
+  const sortedSprint = [...mine].sort((a, b) => b.sprint - a.sprint);
+  sortedLevel[0].role = 'LEADER';
+  const spr = sortedSprint.find((r) => r.id !== sortedLevel[0].id) || sortedSprint[0];
+  if (spr) spr.role = 'SPRINTER';
+  mine.forEach((r) => { if (!r.role) r.role = 'DOMESTIQUE'; });
 }
-const reRole = (r) => r.role || r.autoRole || 'DOM';
-const RE_ROLE_LABEL = { LEADER: 'Leader', DOM: 'Équipier', SPRINTER: 'Sprinteur', FREE: 'Libre' };
-function reOrderEff(S, r, g) {   // multiplicateur d'effort selon la consigne active
-  const o = S.order; if (!o || !r.mine || S.t > o.until) return 1;
-  const role = reRole(r); if (role === 'FREE') return 1;
-  if (o.id === 'PROTECT') return role === 'LEADER' ? 0.8 : 1.12;
-  if (o.id === 'TRAIN') return role === 'SPRINTER' ? 0.85 : role === 'LEADER' ? 1 : 1.15;
-  if (o.id === 'TEMPO') return role === 'LEADER' ? 0.9 : 1.1;
-  if (o.id === 'FRONT') return 1.08;
+
+function reRole(r) { return r.role || 'DOMESTIQUE'; }
+
+function reOrderEff(S, r, g) {
+  if (!r.mine || !S.order) return 1;
+  if (S.order.id === 'PROTECT' && r.role === 'LEADER') return 0.85;
+  if (S.order.id === 'TRAIN' && r.pilot) return 1.15;
   return 1;
 }
-function reGroupOfMine(S) {
-  const cnt = {}; reMine(S).forEach((r) => (cnt[r.group] = (cnt[r.group] || 0) + 1));
-  const id = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0]; return S.groups.find((g) => g.id === id) || null;
-}
-function reOrder(S, id) {
-  const mine = reMine(S), g = reGroupOfMine(S); if (!mine.length || !g) return "Aucun de vos coureurs n'est en course dans un groupe.";
-  reRoles(S);
-  const inG = mine.filter((r) => r.group === g.id);
-  if (id === 'ATTACK') {
-    const picks = inG.filter((r) => reRole(r) !== 'LEADER' && r.atk >= 40).sort((a, b) => b.atk + b.level - (a.atk + a.level)).slice(0, 3);
-    if (!picks.length) return "Personne n'a assez d'énergie d'attaque (40 % minimum, hors leader).";
-    reAttackIds(S, g, picks); return `Attaque collective : ${picks.map((r) => r.name).join(', ')}.`;
-  }
-  const spr = inG.find((r) => reRole(r) === 'SPRINTER') || inG.find((r) => reRole(r) === 'LEADER') || inG[0], dur = { PROTECT: 900, TRAIN: 900, TEMPO: 600, FRONT: 300 }[id];
-  S.order = { id, until: S.t + dur, leader: spr.id };
-  mine.forEach((r) => {
-    const role = reRole(r); if (role === 'FREE') return;
-    r.ordered = true; r.order = id === 'FRONT' ? 'FRONT' : role === 'LEADER' || (id === 'TRAIN' && role === 'SPRINTER') ? 'MID' : 'FRONT'; r.place = r.order;
-    if (id === 'FRONT') r.atk = Math.max(0, r.atk - 3);
-  });
-  reLog(S, `Consigne : ${RE_ORDERS[id]}.`, true); return `Consigne : ${RE_ORDERS[id]}.`;
-}
-async function renderLiveRaceDashboard(c) {
-  if (state.reTimer) { clearInterval(state.reTimer); state.reTimer = null; }
-  c.innerHTML = '<p class="muted pad">Préparation de la course…</p>';
-  const { data } = await sb.from('races').select('*').order('date'), races = data || [];
-  if (!races.length) { c.innerHTML = '<div class="panel"><h4>Course en direct</h4><p class="muted">Aucune course au calendrier.</p></div>'; return; }
-  const pick = (state.simRace && races.find((r) => r.id === state.simRace)) || (state.nextRace && races.find((r) => r.id === state.nextRace.id)) || races[0]; state.simRace = pick.id;
-  const P = generateRaceProfile(pick); await loadStaffImpactCtx(state.team.id);
-  const F = await buildRaceField(pick), S = createRaceState(pick, P, F.riders, F.car); state.race = S; reRoles(S);
-  const VIEWS = [['all', "Vue d'ensemble"], ['lead', 'Suivre la tête'], ['team', 'Mon équipe'], ['final', 'Final']];
-  c.innerHTML = `<div class="rd-grid" id="re-root">
-    <div class="panel rd-instr"><h4>Instructions collectives et stratégie</h4><div class="rd-orders">${Object.entries(RE_ORDERS).map(([k, l]) => `<button data-reord="${k}">${l}</button>`).join('')}</div>
-      <p class="muted" id="re-order" style="margin-top:.6rem"></p></div>
-    <div class="panel rd-profile"><h4>Profil de la course en direct</h4><div class="sq-bar"><div class="sq-ctl">${selHtml('re-race', races.map((r) => [r.id, `${r.name} (${PROFILES[r.profile_type] || r.profile_type})`]), pick.id)}</div>
-      <div class="muted">${P.km} km · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s)</div></div><div id="re-profile"></div></div>
-    <div class="panel rd-radio"><h4>Radio Tour et journal de course</h4><div id="re-journal" class="re-journal"></div></div>
-    <div class="panel rd-bottom"><h4>Marqueurs de groupes</h4><div id="re-groups"></div><h4 style="margin-top:1rem">Mon équipe</h4><div id="re-team"></div></div>
-    <div class="rd-side"><div class="panel"><h4>Météo en direct</h4><div id="re-weather"></div></div>
-      <div class="panel" style="margin-top:.75rem"><h4>Chrono course</h4><div id="re-clock"></div>
-        <div class="re-speed re-col">${[['0', 'Pause'], ['1', 'x1'], ['2', 'x2'], ['4', 'x4'], ['8', 'x8'], ['skip', 'Saut final']].map(([v, l]) => `<button data-resp="${v}">${l}</button>`).join('')}</div></div>
-      <div class="panel" style="margin-top:.75rem"><h4>Sélecteur de vues</h4><div class="re-col">${VIEWS.map(([k, l]) => `<button data-review="${k}">${l}</button>`).join('')}</div></div></div></div>`;
-  const groupsView = () => S.groups.filter((g) => g.riders.length).map((g) => ({ id: g.id, type: g.type, riders: g.riders.filter((i) => S.riders[i].status === 'RACE').length, km: g.km, gap: g.gap }));
-  const m = mountRaceProfile($('re-profile'), P, () => ({ currentKm: reLeadKm(S), groups: groupsView() }), (gid) => { const g = S.groups.find((x) => x.id === gid); if (g) toast(`${SIM_GROUP[g.type][0]} : ${g.riders.length} coureur(s) · ${Math.round(g.gap)} s`); });
-  const bar = (v) => `<span class="mini"><i class="${v < 25 ? 'lo' : ''}" style="width:${Math.round(v)}%"></i></span> ${Math.round(v)}`;
-  const status = (r) => (r.status === 'RACE' ? SIM_GROUP[(S.groups.find((g) => g.id === r.group) || {}).type]?.[0] || '-' : { PUNCT: 'Crevaison', CRASH: 'Chute', RETURN: 'Revient seul', DNF: 'Abandon', FIN: 'Arrivé' }[r.status] || r.status);
-  const groupsHTML = () => `<div class="tbl"><table class="fm sq"><thead><tr><th>Groupe</th><th>Coureurs</th><th>Mon équipe</th><th>Km</th><th>Vitesse</th><th>Écart</th></tr></thead><tbody>${S.groups.filter((g) => g.riders.length).map((g) => {
-    const ids = g.riders.filter((i) => S.riders[i].status === 'RACE'), mine = ids.filter((i) => S.riders[i].mine).length, [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'];
-    return `<tr data-regroup="${g.id}" style="cursor:pointer"><td><span class="re-dot" style="background:${col}"></span>${nm}</td><td>${ids.length}</td><td>${mine || '-'}</td><td>${g.km.toFixed(1)}</td><td>${Math.round(g.v)} km/h</td><td>${g.gap > 0 ? '+' + Math.round(g.gap) + ' s' : 'en tête'}</td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="muted">Aucun groupe.</td></tr>'}</tbody></table></div>`;
-  const teamHTML = () => `<div class="tbl"><table class="fm sq"><thead><tr><th>Photo</th><th>Nom</th><th>Rôle</th><th>Stamina</th><th>Consigne individuelle</th></tr></thead><tbody>
-    ${Object.values(S.riders).filter((r) => r.mine).map((r) => { const on = r.status === 'RACE';
-      return `<tr class="${on ? '' : 'inj'}"><td><span class="re-av">${getPersonAvatar(r, 'rider')}</span></td><td>${esc(r.name)}<div class="muted" style="font-size:.7rem">${esc(status(r))}</div></td>
-      <td>${on ? `<select data-rerole="${r.id}">${[['', 'Auto : ' + RE_ROLE_LABEL[reRole({ ...r, role: null })]], ['LEADER', 'Leader'], ['DOM', 'Équipier'], ['SPRINTER', 'Sprinteur'], ['FREE', 'Libre']].map(([v, l]) => `<option value="${v}" ${v === (r.role || '') ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '-'}</td>
-      <td>${bar(r.stam)}</td><td>${on ? `<select data-replace="${r.id}">${[['', 'Auto (' + RE.PLACES[r.place] + ')'], ['FRONT', 'Avant'], ['MID', 'Milieu'], ['BACK', 'Arrière']].map(([v, l]) => `<option value="${v}" ${v === (r.order || '') ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <button data-reatk="${r.id}">Attaquer</button> ` : ''}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Aucun de vos coureurs n\'est engagé.</td></tr>'}</tbody></table></div>`;
-  const weatherHTML = () => { const h = S.head, kind = Math.abs(h) < 1.5 ? 'de côté' : h > 0 ? 'de face' : 'dans le dos';
-    return `<div class="stat-row"><span>Température</span><b>${S.temp ?? 18} °C</b></div><div class="stat-row"><span>Vent</span><b>${Math.round(S.wind)} km/h, ${kind}</b></div><div class="stat-row"><span>Pluie</span><b class="${S.wet ? 'down' : 'up'}">${S.wet ? 'Route mouillée' : 'Sec'}</b></div>`; };
-  const upd = (full = true) => {
-    const lead = reLeadKm(S), lg = S.groups.find((g) => g.riders.length);
-    $('re-clock').innerHTML = `<div class="stat-row"><span>Temps de course</span><b>${reClock(S.t)}</b></div><div class="stat-row"><span>Kilomètres restants</span><b>${Math.max(0, P.km - lead).toFixed(1)} km</b></div>
-      <div class="stat-row"><span>Vitesse de tête</span><b>${lg ? Math.round(lg.v) : 0} km/h</b></div>${S.done ? '<div class="up" style="margin:.3rem 0"><b>Course terminée</b></div>' : ''}`;
-    $('re-order').textContent = S.order && S.t <= S.order.until ? `Consigne active : ${RE_ORDERS[S.order.id]} (${Math.max(0, Math.round(S.order.until - S.t))} s)` : 'Aucune consigne collective active.';
-    $('re-weather').innerHTML = weatherHTML(); $('re-groups').innerHTML = groupsHTML();
-    document.querySelectorAll('[data-resp]').forEach((b) => b.classList.toggle('on', b.dataset.resp === String(S.speed)));
-    m.update();
-    $('re-journal').innerHTML = S.log.slice(-60).reverse().map((l) => `<div class="re-l ${l.mine ? 'mine' : ''}"><span>${reClock(l.t)} · km ${l.km.toFixed(0)}</span>${esc(l.text)}</div>`).join('');
-    if (full) { reRoles(S); $('re-team').innerHTML = teamHTML(); }
+
+function renderLiveRaceDashboard(root, S, P) {
+  const subHTML = (g) => {
+    const rs = g.riders.map((i) => S.riders[i]).filter(Boolean).sort((a, b) => (b.mine - a.mine) || b.level - a.level).slice(0, 150);
+    return `<div class="re-subbox"><table class="fm sq"><thead><tr><th></th><th>Nom</th><th>Prénom</th><th>Équipe</th><th>Stamina</th><th>Statut</th></tr></thead><tbody>${rs.map((r) => {
+      const [first, ...last] = r.name.split(' ');
+      return `<tr class="${r.mine ? 'me' : ''}"><td><span class="re-av">${getPersonAvatar(r, 'rider')}</span></td><td>${esc(last.join(' ') || first)}</td><td>${last.length ? esc(first) : ''}</td><td>${esc(r.team)}</td><td>${bar(r.stam)}</td>
+        <td>${RE.PLACES[r.place]} · ${r.stam < 25 ? 'Épuisé' : r.stam < 50 ? 'Fatigué' : 'En forme'}${r.mine ? ' · ' + RE_ROLE_LABEL[reRole(r)] : ''}</td></tr>`;
+    }).join('')}</tbody></table></div>`;
   };
-  const setView = (k) => {
-    const v = m.view, g = reGroupOfMine(S);
-    if (k === 'all') Object.assign(v, { zoom: 1, center: null, follow: false });
-    else if (k === 'lead') Object.assign(v, { zoom: 3, follow: true });
-    else if (k === 'team') Object.assign(v, { zoom: 3, follow: false, center: g ? g.km : reLeadKm(S) });
-    else Object.assign(v, { zoom: Math.min(10, Math.max(1, P.km / 20)), follow: false, center: P.km - 10 });
-    m.update();
+  const groupsHTML = () => {
+    const open = state.reOpen || (state.reOpen = new Set());
+    return `<div class="tbl"><table class="fm sq"><thead><tr><th></th><th>Groupe</th><th>Coureurs</th><th>Mon équipe</th><th>Km</th><th>Vitesse</th><th>Écart</th></tr></thead><tbody>${S.groups.filter((g) => g.riders.length).map((g) => {
+      const ids = g.riders.filter((i) => S.riders[i].status === 'RACE'), mine = ids.filter((i) => S.riders[i].mine).length, [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'], isOpen = open.has(g.id);
+      return `<tr data-regroup="${g.id}" style="cursor:pointer"><td><button type="button" class="re-exp" data-reexp="${g.id}" title="Voir les coureurs du groupe">${isOpen ? '▾' : '▸'}</button></td><td><span class="re-dot" style="background:${col}"></span>${nm}</td>
+        <td>${ids.length}</td><td>${mine || '-'}</td><td>${g.km.toFixed(1)}</td><td>${Math.round(g.v)} km/h</td><td>${g.gap > 0 ? '+' + Math.round(g.gap) + ' s' : 'en tête'}</td></tr>${isOpen ? `<tr class="re-sub"><td colspan="7">${subHTML(g)}</td></tr>` : ''}`;
+    }).join('') || '<tr><td colspan="7" class="muted">Aucun groupe.</td></tr>'}</tbody></table></div>`;
   };
-  const root = $('re-root');
+
+  const upd = (redrawProfile = true) => {
+    const sc0 = [...document.querySelectorAll('.re-subbox')].map((e) => e.scrollTop); $('re-groups').innerHTML = groupsHTML(); document.querySelectorAll('.re-subbox').forEach((e, i) => (e.scrollTop = sc0[i] || 0));
+  };
+
   root.onclick = (e) => {
-    const sp = e.target.closest('[data-resp]'), od = e.target.closest('[data-reord]'), at = e.target.closest('[data-reatk]'), gr = e.target.closest('[data-regroup]'), vw = e.target.closest('[data-review]'); od = e.target.closest('[data-reord]'), at = e.target.closest('[data-reatk]'), bo = e.target.closest('[data-rebot]'), gr = e.target.closest('[data-regroup]'), vw = e.target.closest('[data-review]');
-    if (sp) { if (sp.dataset.resp === 'skip') reSkipToFinal(S); else S.speed = +sp.dataset.resp; upd(); }
-    else if (od) { toast(reOrder(S, od.dataset.reord)); upd(); }
-    else if (at) { toast(reAttack(S, at.dataset.reatk)); upd(); }
-    else if (gr) { const g = S.groups.find((x) => x.id === gr.dataset.regroup); if (g) { Object.assign(m.view, { zoom: Math.max(m.view.zoom, 3), follow: false, center: g.km }); m.update(); } }
-    else if (vw) setView(vw.dataset.review);
+    const gr = e.target.closest('[data-regroup]'), ex = e.target.closest('[data-reexp]'), vw = e.target.closest('[data-view]');
+    if (ex) { const o = (state.reOpen = state.reOpen || new Set()); o.has(ex.dataset.reexp) ? o.delete(ex.dataset.reexp) : o.add(ex.dataset.reexp); upd(false); }
+    else if (e.target.closest('[data-resp]')) {
+      const sp = e.target.closest('[data-resp]');
+      if (sp.dataset.resp === 'skip') {
+        reSkipToFinal(S);
+        upd();
+      }
+    }
   };
-  root.onchange = (e) => {
-    const p = e.target.closest('[data-replace]'), ro = e.target.closest('[data-rerole]');
-    if (p) { const r = S.riders[p.dataset.replace]; r.order = p.value || null; r.ordered = false; if (p.value) r.place = p.value; upd(); }
-    else if (ro) { S.riders[ro.dataset.rerole].role = ro.value || null; reRoles(S); upd(); }
-  };
-  $('re-race').onchange = (e) => { state.simRace = e.target.value; renderLiveRaceDashboard(c); };
-  state.reTimer = setInterval(() => {   // 200 ms réelles = 12 s de course à x1
-    if (!$('re-root')) { clearInterval(state.reTimer); state.reTimer = null; return; }
-    if (S.speed > 0 && !S.done) { reAdvance(S, 0.2 * RE.BASE * S.speed); upd(S.tick++ % 5 === 0 && document.activeElement?.tagName !== 'SELECT'); }
-  }, 200);
   upd();
 }

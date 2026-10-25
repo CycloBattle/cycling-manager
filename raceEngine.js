@@ -4,7 +4,7 @@ const RE = { BASE: 60, DT: 10, PLACES: { FRONT: 'Avant', MID: 'Milieu', BACK: 'A
 const reClamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const reClock = (s) => `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}'${String(Math.floor(s % 60)).padStart(2, '0')}"`;
 const reSlope = (P, km) => ((profileAlt(P, km + 0.1) - profileAlt(P, Math.max(0, km - 0.1))) / 200) * 100;                       // pente en %
-const reZone = (P, km) => ({ cobble: P.cobbles.some((c) => km >= c.from && km <= c.to), wind: P.wind.find((w) => km >= w.from && km <= w.to) || null, feed: P.feeds.findIndex((f) => km >= f.from && km <= f.to) });
+const reZone = (P, km) => ({ cobble: P.cobbles.some((c) => km >= c.from && km <= c.to), wind: P.wind.find((w) => km >= w.from && km <= w.to) || null });
 const reAhead = (P, km) => P.km - km < 6 || P.cobbles.some((c) => c.from > km && c.from - km < 4) || P.wind.some((w) => w.from > km && w.from - km < 4) || P.climbs.some((c) => c.start > km && c.start - km < 2);
 const reLeadKm = (S) => { const k = S.groups.filter((g) => !g.finished && g.riders.length).map((g) => g.km); return k.length ? Math.max(...k) : S.profile.km; };
 function reLog(S, text, mine = false) { S.log.push({ t: S.t, km: reLeadKm(S), text, mine }); if (S.log.length > 250) S.log.shift(); }
@@ -14,7 +14,7 @@ function reCap(r, slope, zone) {
   const s = Math.max(0, slope), st = s >= 5 ? r.mountain : s >= 2.5 ? (r.mountain + r.hills) / 2 : r.hills, wkg = 4.6 + (st - 50) * 0.06;
   const aero = 44 + (r.flat - 50) * 0.2 + (zone.cobble ? (r.cobbles - 60) * 0.1 - 6 : 0);
   const v = slope < 0 ? aero + Math.min(32, -slope * 3.6) : 1 / (1 / ((3.6 * wkg) / (9.81 * (s / 100 + 0.005))) + 1 / (aero * (1 + 0.35 * s)));
-  return v * (0.55 + (0.45 * r.stam) / 100) * (r.gly < 10 ? 0.6 : r.gly < 25 ? 0.85 : 1) * (r.boost || 1);
+  return v * (0.55 + (0.45 * r.stam) / 100) * (r.boost || 1);
 }
 
 function reNewGroup(S, type, km, rs, tempo) {
@@ -42,7 +42,7 @@ function reAutoPlace(S, g, act) {   // placement : les meilleurs se placent à l
 
 function createRaceState(race, profile, field, car = 0) {
   const rng = simRng(String(race.id) + ':' + Date.now());
-  const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, gly: 100, bottles: 2, slip: 0, order: null, fed: [], drop: false }]));
+    const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, slip: 0, order: null, drop: false }]));
   const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,
     temp: Math.round(8 + rng() * 18), order: null, wind: 15 + rng() * 25, head: (rng() - 0.5) * 8, wet: rng() < 0.12, groups: [{ id: 'g0', type: 'PELOTON', km: 0, v: 0, tempo: 0.92, riders: field.map((r) => r.id), gap: 0, born: 0, finished: false }] };
   reLog(S, `Départ de ${race.name} : ${field.length} coureurs, ${profile.km} km${S.wet ? ', route mouillée' : ''}.`); return S;
@@ -77,10 +77,6 @@ function reStep(S, dt = RE.DT) {
       const cap = reCap(r, slope, zone), sh = 1 - (1 - RE.SHELTER[r.place]) * (slope > 6 ? 0.35 : 1), eff = (v / cap) ** 2 * sh * (g.chase ? 1.1 : 1) * reOrderEff(S, r, g);
       r.stam = reClamp(r.stam - (0.33 * eff ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60 + (eff < 0.6 ? ((0.6 - eff) * 0.35 * (r.recovery / 60) * dt) / 60 : 0), 0, 100);
       if (eff > 1.05) r.atk = Math.max(0, r.atk - ((eff - 1.05) * 1.6 * dt) / 10); else if (eff < 0.9) r.atk = Math.min(100, r.atk + (0.05 * (r.recovery / 60) * dt) / 10);
-      r.gly = Math.max(0, r.gly - ((0.2 + 0.18 * eff) * dt) / 60);
-      if (r.gly < 60 && r.bottles > 0) { r.bottles--; r.gly = Math.min(100, r.gly + 22); }                                  // il boit un bidon
-      if (zone.feed >= 0 && !r.fed.includes(zone.feed)) { r.fed.push(zone.feed); r.bottles = Math.min(3, r.bottles + 1); }   // zone de ravitaillement : musette
-      if (r.gly < 8 && !r.bonk) { r.bonk = true; reLog(S, `Fringale pour ${r.name} (${r.team}).`, r.mine); } else if (r.gly > 30) r.bonk = false;
       r.slip = eff > 1.2 ? r.slip + (eff - 1.2) * dt * 2 : Math.max(0, r.slip - dt * 0.5);
       if (r.slip > 40 || r.stam < 5) r.drop = true;
     }
@@ -107,7 +103,7 @@ function reStep(S, dt = RE.DT) {
   S.groups = S.groups.filter((g) => g.riders.length);
   const lead = reLeadKm(S); S.groups.forEach((g) => (g.gap = ((lead - g.km) / Math.max(20, g.v || 30)) * 3600));
   for (const g of S.groups) if (g.km >= total && !g.finished) reFinish(S, g);
-  if (!S.groups.some((g) => !g.finished && g.riders.length) && !Object.values(S.riders).some((r) => ['RETURN', 'PUNCT', 'CRASH', 'CAR'].includes(r.status))) {
+  if (!S.groups.some((g) => !g.finished && g.riders.length) && !Object.values(S.riders).some((r) => ['RETURN', 'PUNCT', 'CRASH'].includes(r.status))) {
     S.done = true; reLog(S, 'Classement : ' + S.results.slice(0, 5).map((r) => `${r.pos}. ${r.name}`).join(' · '));
   }
 }
@@ -125,27 +121,14 @@ function reSolos(S, dt) {   // coureurs hors groupe : crevaison / chute en cours
   const P = S.profile;
   for (const r of Object.values(S.riders)) {
     if (r.status === 'PUNCT' || r.status === 'CRASH') { if (S.t >= r.until) r.status = 'RETURN'; continue; }
-    if (r.status === 'CAR') { r.km += ((r.gv || 38) * 0.9 * dt) / 3600; if (S.t >= r.until) { reDeliver(S, r); r.status = 'RETURN'; } continue; }
     if (r.status !== 'RETURN') continue;
     const v = reCap(r, reSlope(P, r.km), reZone(P, r.km)) * 1.08; r.km += (v * dt) / 3600; r.alone = (r.alone || 0) + dt;
       if (r.km >= S.profile.km) { reNewGroup(S, 'DROPPED', S.profile.km, [r], 0.88); continue; }
-    r.stam = Math.max(0, r.stam - (0.33 * 1.2 ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60); r.gly = Math.max(0, r.gly - (0.4 * dt) / 60);
+    r.stam = Math.max(0, r.stam - (0.33 * 1.2 ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60);
     const g2 = S.groups.find((g) => !g.finished && g.riders.length && Math.abs(g.km - r.km) < 0.15);
     if (g2) { g2.riders.push(r.id); r.group = g2.id; r.status = 'RACE'; r.alone = 0; r.slip = 0; if (r.mine) reLog(S, `${r.name} est revenu dans le groupe.`, true); }
     else if (r.stam < 8 || r.alone > 900) { r.alone = 0; reNewGroup(S, 'DROPPED', r.km, [r], 0.88); }
   }
-}
-function reDeliver(S, r) {   // l'équipier ramène des bidons à ses coéquipiers
-  const mates = (r.fetch || []).map((i) => S.riders[i]).filter((m) => m.status === 'RACE');
-  mates.forEach((m) => (m.bottles = Math.min(3, m.bottles + 2))); r.bottles = 3; reLog(S, `${r.name} ramène des bidons à ${mates.length} coéquipier(s).`, true);
-}
-function reSendForBottles(S, id) {   // ordre : envoyer un équipier chercher des bidons à la voiture (durée réduite par la flotte de véhicules)
-  const r = S.riders[id], g = S.groups.find((x) => x.id === r?.group);
-  if (!r || r.status !== 'RACE' || !g) return 'Ce coureur ne peut pas aller à la voiture.';
-  const mates = g.riders.filter((i) => i !== id && S.riders[i].mine && S.riders[i].status === 'RACE');
-  if (!mates.length) return 'Aucun coéquipier à ravitailler dans ce groupe.';
-  g.riders = g.riders.filter((i) => i !== id); Object.assign(r, { status: 'CAR', group: null, km: g.km, gv: g.v, fetch: mates, until: S.t + Math.max(45, 110 - S.car * 12) });
-  reLog(S, `${r.name} redescend à la voiture chercher des bidons pour ${mates.length} coéquipier(s).`, true); return `${r.name} part chercher des bidons.`;
 }
 
 function reAttackIds(S, g, rs) {
@@ -240,7 +223,7 @@ function reBuildResults(S) {
 function reSummary(S, R) {
   const w = R.fin[0], L = S.log, n = (k) => L.filter((l) => l.text.startsWith(k)).length, atk = L.find((l) => l.text.startsWith('Attaque')), mine = R.fin.find((r) => r.mine);
   return [`${S.race.name} : ${w.name} (${w.team}) s'impose${S.sprint ? ' au sprint' : ''}.`, `Podium : ${R.fin.slice(0, 3).map((r) => `${r.pos}. ${r.name} (${r.team})`).join(' · ')}.`,
-    atk ? `Fait de course : ${atk.text}` : 'Course contrôlée par le peloton.', `${n('Crevaison')} crevaison(s), ${n('Chute')} chute(s), ${n('Fringale')} fringale(s), ${R.gone.length} abandon(s).`,
+    atk ? `Fait de course : ${atk.text}` : 'Course contrôlée par le peloton.', `${n('Crevaison')} crevaison(s), ${n('Chute')} chute(s), ${R.gone.length} abandon(s).`,
     R.sprint[0] ? `Maillot des sprints : ${R.sprint[0].name} (${R.sprint[0].pts} pts).` : '', R.kom[0] ? `Meilleur grimpeur : ${R.kom[0].name} (${R.kom[0].pts} pts).` : '',
     mine ? `Votre équipe : meilleur résultat ${mine.pos}e avec ${mine.name}.` : "Votre équipe n'a pas terminé dans le classement."].filter(Boolean).join('\n');
 }
@@ -322,7 +305,7 @@ async function buildRaceField(race) {
 }
 
 /* ===== Consignes collectives et rôles ===== */
-const RE_ORDERS = { PROTECT: 'Protéger le leader', TRAIN: 'Préparer le train', ATTACK: 'Attaquer', TEMPO: 'Rouler en tête', BOTTLES: 'Aller chercher des bidons', FRONT: 'Frotter en tête' };
+const RE_ORDERS = { PROTECT: 'Protéger le leader', TRAIN: 'Préparer le train', ATTACK: 'Attaquer', TEMPO: 'Rouler en tête', FRONT: 'Frotter en tête' };
 const reMine = (S) => Object.values(S.riders).filter((r) => r.mine && r.status === 'RACE' && r.group);
 function reRoles(S) {   // rôles automatiques : leader = meilleur niveau, sprinteur = meilleur sprint parmi les autres
   const mine = Object.values(S.riders).filter((r) => r.mine && !['DNF', 'FIN'].includes(r.status)), lead = [...mine].sort((a, b) => b.level - a.level)[0];
@@ -352,10 +335,6 @@ function reOrder(S, id) {
     const picks = inG.filter((r) => reRole(r) !== 'LEADER' && r.atk >= 40).sort((a, b) => b.atk + b.level - (a.atk + a.level)).slice(0, 3);
     if (!picks.length) return "Personne n'a assez d'énergie d'attaque (40 % minimum, hors leader).";
     reAttackIds(S, g, picks); return `Attaque collective : ${picks.map((r) => r.name).join(', ')}.`;
-  }
-  if (id === 'BOTTLES') {
-    const cand = inG.filter((r) => reRole(r) !== 'LEADER' && inG.some((m) => m.id !== r.id)).sort((a, b) => b.stam - a.stam)[0];
-    return cand ? reSendForBottles(S, cand.id) : 'Aucun équipier disponible pour aller à la voiture.';
   }
   const spr = inG.find((r) => reRole(r) === 'SPRINTER') || inG.find((r) => reRole(r) === 'LEADER') || inG[0], dur = { PROTECT: 900, TRAIN: 900, TEMPO: 600, FRONT: 300 }[id];
   S.order = { id, until: S.t + dur, leader: spr.id };
@@ -389,17 +368,17 @@ async function renderLiveRaceDashboard(c) {
   const groupsView = () => S.groups.filter((g) => g.riders.length).map((g) => ({ id: g.id, type: g.type, riders: g.riders.filter((i) => S.riders[i].status === 'RACE').length, km: g.km, gap: g.gap }));
   const m = mountRaceProfile($('re-profile'), P, () => ({ currentKm: reLeadKm(S), groups: groupsView() }), (gid) => { const g = S.groups.find((x) => x.id === gid); if (g) toast(`${SIM_GROUP[g.type][0]} : ${g.riders.length} coureur(s) · ${Math.round(g.gap)} s`); });
   const bar = (v) => `<span class="mini"><i class="${v < 25 ? 'lo' : ''}" style="width:${Math.round(v)}%"></i></span> ${Math.round(v)}`;
-  const status = (r) => (r.status === 'RACE' ? SIM_GROUP[(S.groups.find((g) => g.id === r.group) || {}).type]?.[0] || '-' : { PUNCT: 'Crevaison', CRASH: 'Chute', CAR: 'À la voiture', RETURN: 'Revient seul', DNF: 'Abandon', FIN: 'Arrivé' }[r.status] || r.status);
+  const status = (r) => (r.status === 'RACE' ? SIM_GROUP[(S.groups.find((g) => g.id === r.group) || {}).type]?.[0] || '-' : { PUNCT: 'Crevaison', CRASH: 'Chute', RETURN: 'Revient seul', DNF: 'Abandon', FIN: 'Arrivé' }[r.status] || r.status);
   const groupsHTML = () => `<div class="tbl"><table class="fm sq"><thead><tr><th>Groupe</th><th>Coureurs</th><th>Mon équipe</th><th>Km</th><th>Vitesse</th><th>Écart</th></tr></thead><tbody>${S.groups.filter((g) => g.riders.length).map((g) => {
     const ids = g.riders.filter((i) => S.riders[i].status === 'RACE'), mine = ids.filter((i) => S.riders[i].mine).length, [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'];
     return `<tr data-regroup="${g.id}" style="cursor:pointer"><td><span class="re-dot" style="background:${col}"></span>${nm}</td><td>${ids.length}</td><td>${mine || '-'}</td><td>${g.km.toFixed(1)}</td><td>${Math.round(g.v)} km/h</td><td>${g.gap > 0 ? '+' + Math.round(g.gap) + ' s' : 'en tête'}</td></tr>`;
   }).join('') || '<tr><td colspan="6" class="muted">Aucun groupe.</td></tr>'}</tbody></table></div>`;
-  const teamHTML = () => `<div class="tbl"><table class="fm sq"><thead><tr><th>Photo</th><th>Nom</th><th>Rôle</th><th>Stamina</th><th>Bidons</th><th>Consigne individuelle</th></tr></thead><tbody>
+  const teamHTML = () => `<div class="tbl"><table class="fm sq"><thead><tr><th>Photo</th><th>Nom</th><th>Rôle</th><th>Stamina</th><th>Consigne individuelle</th></tr></thead><tbody>
     ${Object.values(S.riders).filter((r) => r.mine).map((r) => { const on = r.status === 'RACE';
       return `<tr class="${on ? '' : 'inj'}"><td><span class="re-av">${getPersonAvatar(r, 'rider')}</span></td><td>${esc(r.name)}<div class="muted" style="font-size:.7rem">${esc(status(r))}</div></td>
       <td>${on ? `<select data-rerole="${r.id}">${[['', 'Auto : ' + RE_ROLE_LABEL[reRole({ ...r, role: null })]], ['LEADER', 'Leader'], ['DOM', 'Équipier'], ['SPRINTER', 'Sprinteur'], ['FREE', 'Libre']].map(([v, l]) => `<option value="${v}" ${v === (r.role || '') ? 'selected' : ''}>${l}</option>`).join('')}</select>` : '-'}</td>
-      <td>${bar(r.stam)}</td><td>${r.bottles} / 3</td><td>${on ? `<select data-replace="${r.id}">${[['', 'Auto (' + RE.PLACES[r.place] + ')'], ['FRONT', 'Avant'], ['MID', 'Milieu'], ['BACK', 'Arrière']].map(([v, l]) => `<option value="${v}" ${v === (r.order || '') ? 'selected' : ''}>${l}</option>`).join('')}</select>
-        <button data-reatk="${r.id}">Attaquer</button> <button data-rebot="${r.id}">Bidons</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="6" class="muted">Aucun de vos coureurs n\'est engagé.</td></tr>'}</tbody></table></div>`;
+      <td>${bar(r.stam)}</td><td>${on ? `<select data-replace="${r.id}">${[['', 'Auto (' + RE.PLACES[r.place] + ')'], ['FRONT', 'Avant'], ['MID', 'Milieu'], ['BACK', 'Arrière']].map(([v, l]) => `<option value="${v}" ${v === (r.order || '') ? 'selected' : ''}>${l}</option>`).join('')}</select>
+        <button data-reatk="${r.id}">Attaquer</button> ` : ''}</td></tr>`; }).join('') || '<tr><td colspan="5" class="muted">Aucun de vos coureurs n\'est engagé.</td></tr>'}</tbody></table></div>`;
   const weatherHTML = () => { const h = S.head, kind = Math.abs(h) < 1.5 ? 'de côté' : h > 0 ? 'de face' : 'dans le dos';
     return `<div class="stat-row"><span>Température</span><b>${S.temp ?? 18} °C</b></div><div class="stat-row"><span>Vent</span><b>${Math.round(S.wind)} km/h, ${kind}</b></div><div class="stat-row"><span>Pluie</span><b class="${S.wet ? 'down' : 'up'}">${S.wet ? 'Route mouillée' : 'Sec'}</b></div>`; };
   const upd = (full = true) => {
@@ -423,11 +402,10 @@ async function renderLiveRaceDashboard(c) {
   };
   const root = $('re-root');
   root.onclick = (e) => {
-    const sp = e.target.closest('[data-resp]'), od = e.target.closest('[data-reord]'), at = e.target.closest('[data-reatk]'), bo = e.target.closest('[data-rebot]'), gr = e.target.closest('[data-regroup]'), vw = e.target.closest('[data-review]');
+    const sp = e.target.closest('[data-resp]'), od = e.target.closest('[data-reord]'), at = e.target.closest('[data-reatk]'), gr = e.target.closest('[data-regroup]'), vw = e.target.closest('[data-review]'); od = e.target.closest('[data-reord]'), at = e.target.closest('[data-reatk]'), bo = e.target.closest('[data-rebot]'), gr = e.target.closest('[data-regroup]'), vw = e.target.closest('[data-review]');
     if (sp) { if (sp.dataset.resp === 'skip') reSkipToFinal(S); else S.speed = +sp.dataset.resp; upd(); }
     else if (od) { toast(reOrder(S, od.dataset.reord)); upd(); }
     else if (at) { toast(reAttack(S, at.dataset.reatk)); upd(); }
-    else if (bo) { toast(reSendForBottles(S, bo.dataset.rebot)); upd(); }
     else if (gr) { const g = S.groups.find((x) => x.id === gr.dataset.regroup); if (g) { Object.assign(m.view, { zoom: Math.max(m.view.zoom, 3), follow: false, center: g.km }); m.update(); } }
     else if (vw) setView(vw.dataset.review);
   };

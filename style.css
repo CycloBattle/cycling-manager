@@ -274,3 +274,7 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .sp-r { position:absolute; left:0; height:24px; display:flex; align-items:center; gap:.4rem; padding:0 .7rem; border-radius:99px; background:#4c1d95; color:#fff; font-size:.75rem; white-space:nowrap; } .sp-r.mine { background:#db2777; } .sp-n { font-weight:800; }
 .sp-line { position:absolute; right:12px; top:0; bottom:0; width:6px; background:repeating-linear-gradient(#fff 0 6px,#111 6px 12px); }
 @media (max-width:700px) { .res-top { grid-template-columns:1fr; } }
+
+.re-exp { background:#1f2937; border:1px solid #374151; padding:.05rem .5rem; font-size:.85rem; line-height:1.3; }
+.re-sub td { padding:0 0 .6rem 1.6rem !important; background:#0b1020; }
+.re-subbox { max-height:260px; overflow:auto; border:1px solid #374151; border-radius:6px; }

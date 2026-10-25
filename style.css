@@ -278,3 +278,6 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .re-exp { background:#1f2937; border:1px solid #374151; padding:.05rem .5rem; font-size:.85rem; line-height:1.3; }
 .re-sub td { padding:0 0 .6rem 1.6rem !important; background:#0b1020; }
 .re-subbox { max-height:260px; overflow:auto; border:1px solid #374151; border-radius:6px; }
+
+.si-drop { margin:.8rem 0; padding:1.6rem; border:2px dashed #4b5563; border-radius:10px; text-align:center; color:var(--muted); cursor:pointer; }
+.si-drop.on, .si-drop:hover { border-color:#a78bfa; background:#4c1d9522; color:#e5e7eb; }

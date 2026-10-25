@@ -46,11 +46,9 @@ function generateRaceProfile(race) {
   // Sprints intermédiaires (S) et ravitaillements (zones musette) : hors des cols
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
-  const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0, nf = type === 'TIME_TRIAL' || dist < 120 ? 0 : dist > 200 ? 2 : 1;
+  const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
   const sprints = Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
-  const feeds = Array.from({ length: nf }, (_, i) => { const from = +place(dist * (nf === 1 ? R(0.5, 0.62) : i === 0 ? R(0.38, 0.45) : R(0.66, 0.74)), 3).toFixed(1); return { from, to: +(from + 2.5).toFixed(1) }; });
-  sprints.forEach((s) => { if (feeds.some((f) => Math.abs(s.km - f.from) < 6)) s.km = Math.min(dist - 6, +(s.km + 8).toFixed(1)); });
-
+  
   // Secteurs pavés (course de type COBBLES) : de plus en plus durs vers l'arrivée
   const cobbles = [];
   if (type === 'COBBLES') {
@@ -104,11 +102,10 @@ function renderRaceProfileSVG(P, currentKm = 0, groups = [], view = { zoom: 1, c
   const tick = [1, 2, 5, 10, 20, 25, 50, 100].find((s) => span / s <= 10) || 100, ticks = [];
   for (let k = Math.ceil(v0 / tick) * tick; k <= v1 + 0.01; k += tick) ticks.push(k);
 
-  const cobbles = P.cobbles.map((c) => band(c.from, c.to, '#b45309', 0.6)).join(''), feeds = P.feeds.map((f) => band(f.from, f.to, '#22c55e', 0.4)).join('');
+  const cobbles = P.cobbles.map((c) => band(c.from, c.to, '#b45309', 0.6)).join('');
   const wind = P.wind.map((w) => band(w.from, w.to, '#38bdf8', 0.3) + (w.to >= v0 && w.from <= v1 ? `<g><title>Vent de côté (${w.dir === 'L' ? 'gauche' : 'droite'}) : risque de bordures</title><use href="#simWind" x="${X((Math.max(w.from, v0) + Math.min(w.to, v1)) / 2) - 9}" y="${mt + 2}" width="18" height="18"/></g>` : '')).join('');
-  const bars = P.climbs.map((c) => bar(c.start, c.km, '#f43f5e')).join('') + P.cobbles.map((c) => bar(c.from, c.to, '#b45309')).join('') + P.feeds.map((f) => bar(f.from, f.to, '#22c55e')).join('');
-  const labels = P.cobbles.filter((c) => c.to >= v0 && c.from <= v1 && X(Math.min(c.to, v1)) - X(Math.max(c.from, v0)) > 14).map((c) => `<text x="${X((Math.max(c.from, v0) + Math.min(c.to, v1)) / 2)}" y="${base + 19}" text-anchor="middle" font-size="8" fill="#f59e0b">${'★'.repeat(c.stars)}</text>`).join('')
-    + P.feeds.filter((f) => f.to >= v0 && f.from <= v1).map((f) => `<text x="${X(Math.max(f.from, v0))}" y="${base + 19}" font-size="8" fill="#4ade80">Ravito</text>`).join('');
+  const bars = P.climbs.map((c) => bar(c.start, c.km, '#f43f5e')).join('') + P.cobbles.map((c) => bar(c.from, c.to, '#b45309')).join('');
+  const labels = P.cobbles.filter((c) => c.to >= v0 && c.from <= v1 && X(Math.min(c.to, v1)) - X(Math.max(c.from, v0)) > 14).map((c) => `<text x="${X((Math.max(c.from, v0) + Math.min(c.to, v1)) / 2)}" y="${base + 19}" text-anchor="middle" font-size="8" fill="#f59e0b">${'★'.repeat(c.stars)}</text>`).join('');
   const pins = P.climbs.map((c) => pin(c.km, c.cat, c.cat === 'HC' ? '#7f1d1d' : '#db2777', c.cat === 'HC' ? 11 : 9, `Col de catégorie ${c.cat} : ${c.len.toFixed(1)} km à ${c.grad} % (+${c.gain} m) · km ${c.km.toFixed(0)}`)).join('')
     + P.sprints.map((s, i) => pin(s.km, 'S', '#10b981', 9, `Sprint intermédiaire n°${i + 1} · km ${s.km}`)).join('');
   const marks = groups.filter((g) => g.km >= v0 - 1 && g.km <= v1 + 1).map((g, i) => {
@@ -127,14 +124,14 @@ function renderRaceProfileSVG(P, currentKm = 0, groups = [], view = { zoom: 1, c
       <linearGradient id="simTerrain" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#eab308" stop-opacity=".9"/><stop offset="1" stop-color="#422006" stop-opacity=".95"/></linearGradient>
       <pattern id="simChk" width="6" height="6" patternUnits="userSpaceOnUse"><rect width="6" height="6" fill="#fff"/><rect width="3" height="3" fill="#111"/><rect x="3" y="3" width="3" height="3" fill="#111"/></pattern>
       <symbol id="simWind" viewBox="0 0 24 24"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8" fill="none" stroke="#7dd3fc" stroke-width="2" stroke-linecap="round"/></symbol></defs>
-      <rect width="${W}" height="${H}" rx="8" fill="url(#simSky)"/><path d="${area}" fill="url(#simTerrain)"/>${cobbles}${feeds}${wind}
+      <rect width="${W}" height="${H}" rx="8" fill="url(#simSky)"/><path d="${area}" fill="url(#simTerrain)"/>${cobbles}${wind}
       ${runs.map((r) => `<path d="${r.d}" fill="none" stroke="${r.col}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`).join('')}
       <line x1="${ml}" y1="${base}" x2="${W - mr}" y2="${base}" stroke="#475569"/>${bars}${labels}
       ${ticks.map((k) => `<line x1="${X(k)}" y1="${base}" x2="${X(k)}" y2="${base + 4}" stroke="#64748b"/><text x="${X(k)}" y="${base + 33}" text-anchor="middle" font-size="10" fill="#94a3b8">${k}</text>`).join('')}
       ${v1 >= dist - 0.01 ? `<text x="${W - mr}" y="${base + 44}" text-anchor="end" font-size="10" fill="#cbd5e1">${dist} km</text>` : ''}
       ${now}${startM}${endM}${pins}${marks}</svg>
     <div class="sim-legend"><span><i style="background:#fde68a"></i>Plat</span><span><i style="background:#facc15"></i>2-4 %</span><span><i style="background:#fb923c"></i>5-7 %</span><span><i style="background:#dc2626"></i>8 % et +</span>
-      <span><i style="background:#f43f5e"></i>Col</span><span><i style="background:#10b981"></i>Sprint (S)</span><span><i style="background:#b45309"></i>Pavés</span><span><i style="background:#38bdf8"></i>Vent / bordures</span><span><i style="background:#22c55e"></i>Ravitaillement</span></div>`;
+      <span><i style="background:#f43f5e"></i>Col</span><span><i style="background:#10b981"></i>Sprint (S)</span><span><i style="background:#b45309"></i>Pavés</span><span><i style="background:#38bdf8"></i>Vent / bordures</span></div>`;
 }
 // Monte le profil dans un conteneur et gère zoom + / zoom − / navigation / centrage sur le leader. Le moteur de course appellera update() à chaque tick.
 function mountRaceProfile(el, profile, getState, onGroup) {

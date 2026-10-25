@@ -29,7 +29,7 @@ function generateRaceProfile(race) {
   for (let i = 0; i < n; i++) {
     const gr = R(cfg.gr[0], cfg.gr[1]); let gain = Math.min(cfg.max, Math.max(50, (elev * 0.65 * w[i]) / ws)), len = gain / (10 * gr);
     if (len > slot / 1.7) { len = slot / 1.7; gain = len * 10 * gr; }
-    const top = type === 'MOUNTAIN' && i === n - 1 && rng() < 0.5;                          // arrivée au sommet
+    const top = type === 'MOUNTAIN' && i === n - 1 && rng() < 0.5;                         // arrivée au sommet
     const start = top ? dist - len : lo + i * slot + R(0, Math.max(0, slot - len * 1.7));
     climbs.push({ start, km: start + len, len, gain: Math.round(gain), grad: +(gain / (len * 10)).toFixed(1), dlen: top ? 0 : len * 0.6, cat: simCat(gain), top });
   }
@@ -43,7 +43,7 @@ function generateRaceProfile(race) {
   for (let k = 0; k < dist; k += step) points.push([+k.toFixed(2), Math.round(alt(k))]);
   points.push([dist, Math.round(alt(dist))]);
 
-  // Sprints intermédiaires (S) et ravitaillements (zones musette) : hors des cols
+  // Sprints intermédiaires (S) : hors des cols
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
   const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
@@ -65,7 +65,7 @@ function generateRaceProfile(race) {
   }
   wind.sort((a, b) => a.from - b.from);
   const alts = points.map((p) => p[1]);
-  return { raceId: race.id, name: race.name || 'Course', type, km: dist, points, climbs, sprints, feeds, cobbles, wind, minAlt: Math.min(...alts), maxAlt: Math.max(...alts) };
+  return { raceId: race.id, name: race.name || 'Course', type, km: dist, points, climbs, sprints, cobbles, wind, minAlt: Math.min(...alts), maxAlt: Math.max(...alts) };
 }
 const SIM_GROUP = { BREAK: ['Échappée', '#f472b6'], PELOTON: ['Peloton', '#a78bfa'], CHASE: ['Poursuivants', '#fbbf24'], DROPPED: ['Lâchés', '#9ca3af'] };
 const simSlope = (s) => (s < -1.5 ? '#94a3b8' : s < 2 ? '#fde68a' : s < 4.5 ? '#facc15' : s < 7.5 ? '#fb923c' : '#dc2626');
@@ -82,7 +82,7 @@ function renderRaceProfileSVG(P, currentKm = 0, groups = [], view = { zoom: 1, c
   const X = (k) => +(ml + ((k - v0) / span) * pw).toFixed(1), Y = (a) => +(mt + ph - ((a - amin) / (amax - amin)) * ph).toFixed(1);
 
   const area = `M${X(v0)} ${base} ` + ks.map((k, i) => `L${X(k)} ${Y(al[i])}`).join(' ') + ` L${X(v1)} ${base} Z`;
-  const runs = []; let cur = null;                                                                    // ligne d'altitude colorée selon la pente
+  const runs = []; let cur = null;                                                                 // ligne d'altitude colorée selon la pente
   for (let i = 1; i < ks.length; i++) {
     const s = ((al[i] - al[i - 1]) / ((ks[i] - ks[i - 1]) * 1000)) * 100, col = simSlope(s);
     if (!cur || cur.col !== col) { cur = { col, d: `M${X(ks[i - 1])} ${Y(al[i - 1])}` }; runs.push(cur); }
@@ -162,7 +162,7 @@ async function renderRaceLive(c) {
   state.simRace = pick.id;
   c.innerHTML = `<div class="sim-layout"><div><div class="panel"><h4>Instructions</h4><p class="muted">Les ordres aux coureurs arriveront à l'étape suivante.</p></div>
       <div class="panel"><h4>Journal de la course en direct</h4><p class="muted">Le journal s'affichera ici.</p></div></div>
-    <div><div class="panel"><h4>Profil de la course en direct</h4>
+      <div><div class="panel"><h4>Profil de la course en direct</h4>
       <div class="sq-bar"><div class="sq-ctl">${selHtml('sim-race', races.map((r) => [r.id, `${r.name} (${PROFILES[r.profile_type] || r.profile_type})`]), pick.id)}</div>
         <div class="muted">${P.km} km · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div></div>
       <div id="sim-profile"></div><label style="margin-top:.5rem">Position de la course (démo) : <b id="sim-pos-v"></b> km</label><input id="sim-pos" type="range" min="0" max="${P.km}" step="0.5" value="${Math.round(P.km * 0.35)}"></div>

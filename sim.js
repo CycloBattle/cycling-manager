@@ -16,6 +16,7 @@ function profileAlt(P, km) {
 
 // race : { id, name, profile_type: FLAT | HILLS | MOUNTAIN | COBBLES | TIME_TRIAL, distance_km, elevation_m } : même course = même profil (graine fixe)
 function generateRaceProfile(race) {
+  if (race.profile_data?.points) return simProfileFromData(race);
   const type = race.profile_type || 'FLAT', dist = Math.max(10, Number(race.distance_km) || 150), rng = simRng(String(race.id || race.name || 'course') + type);
   const R = (a, b) => a + rng() * (b - a), I = (a, b) => Math.floor(R(a, b + 1)), clamp = (v, a, b) => Math.max(a, Math.min(b, v)), ov = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
   const CFG = { FLAT: { base: [15, 60], n: [0, 1], elev: 250, max: 200, gr: [3, 6], amp: 8 }, COBBLES: { base: [20, 90], n: [0, 2], elev: 400, max: 200, gr: [3, 6], amp: 12 },
@@ -175,4 +176,116 @@ async function renderRaceLive(c) {
   $('sim-pos-v').textContent = pos;
   $('sim-pos').oninput = (e) => { pos = +e.target.value; $('sim-pos-v').textContent = pos; m.update(); };
   $('sim-race').onchange = (e) => { state.simRace = e.target.value; renderRaceLive(c); };
+}
+/* ===== Étape générée depuis une image de profil ===== */
+// Analyse l'image : courbe d'altitude (zone verte ou grise), secteurs pavés (zones grises)
+function simAnalyzeProfileImage(img, dist, altMin, altMax) {
+  const W = Math.min(1600, img.naturalWidth), Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas');
+  cv.width = W; cv.height = Hh; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
+  const px = cx.getImageData(0, 0, W, Hh).data;
+  const kind = (x, y) => { const i = (y * W + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2];
+    if (g > 110 && g > r + 8 && g > b + 35) return 1;                                              // terrain vert
+    if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r >= 95 && r <= 205) return 2;            // secteur pavé (gris)
+    return 0; };
+  const top = new Array(W).fill(-1), bot = new Array(W).fill(-1);
+  for (let x = 0; x < W; x++) for (let y = 0; y < Hh - 8; y++) {
+    let ok = true; for (let k = 0; k < 8; k++) if (!kind(x, y + k)) { ok = false; break; }
+    if (!ok) continue;
+    let b = y; while (b < Hh - 1 && (kind(x, b + 1) || kind(x, b + 2))) b++;
+    top[x] = y; bot[x] = b; break;
+  }
+  const v = (x) => top[x] >= 0 && bot[x] - top[x] >= 6; let x0 = -1, x1 = -1;
+  for (let x = 0; x < W - 10 && x0 < 0; x++) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x + k)) { ok = false; break; } if (ok) x0 = x; }
+  for (let x = W - 1; x >= 10 && x1 < 0; x--) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x - k)) { ok = false; break; } if (ok) x1 = x; }
+  if (x0 < 0 || x1 <= x0 + 20) throw new Error('Profil non détecté : utilisez une image avec une zone verte ou grise bien visible.');
+  const med = (a) => { const s = a.slice().sort((p, q) => p - q); return s[s.length >> 1]; }, tops = [], bots = [];
+  for (let x = x0; x <= x1; x++) {   // filtre médian : ignore les fines lignes verticales des légendes
+    const ts = [], bs = []; for (let j = x - 4; j <= x + 4; j++) if (j >= 0 && j < W && v(j)) { ts.push(top[j]); bs.push(bot[j]); }
+    tops.push(med(ts)); bots.push(med(bs));
+  }
+  const base = med(bots), g0 = tops.map((t, i) => (kind(x0 + i, Math.min(base - 2, t + 5)) === 2 ? 1 : 0));
+  const gr = g0.map((_, i) => { let s = 0; for (let j = i - 2; j <= i + 2; j++) s += g0[j] || 0; return s >= 3 ? 1 : 0; });
+  const n = tops.length, N = Math.min(480, n - 1), hs = tops.map((t) => base - t), hmin = Math.min(...hs), span = Math.max(1, Math.max(...hs) - hmin), points = [];
+  for (let s = 0; s <= N; s++) points.push([+((s / N) * dist).toFixed(2), Math.round(altMin + ((hs[Math.round((s / N) * (n - 1))] - hmin) / span) * (altMax - altMin))]);
+  const kmOf = (i) => (i / (n - 1)) * dist, cobbles = []; let st = -1;
+  for (let i = 0; i <= n; i++) {
+    if (gr[i]) { if (st < 0) st = i; continue; }
+    if (st >= 0) { const f = kmOf(st), t = kmOf(i), last = cobbles[cobbles.length - 1]; if (last && f - last.to < 0.5) last.to = +t.toFixed(1); else cobbles.push({ from: +f.toFixed(1), to: +t.toFixed(1) }); st = -1; }
+  }
+  return { km: dist, altMin, altMax, points, cobbles: cobbles.filter((c) => c.to - c.from >= 0.2) };
+}
+
+// Construit le profil complet (cols, sprints, pavés, vent) à partir des points enregistrés
+function simProfileFromData(race) {
+  const D = race.profile_data, dist = Number(race.distance_km) || D.km, pts = D.points, type = race.profile_type || D.type || 'FLAT', n = pts.length;
+  const rng = simRng(String(race.id || race.name || 'etape') + type), R = (a, b) => a + rng() * (b - a), I = (a, b) => Math.floor(R(a, b + 1)), clamp = (v, a, b) => Math.max(a, Math.min(b, v)), ov = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
+  const sm = pts.map((p, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) { s += pts[j][1]; c++; } return s / c; });
+  const T = 30, ex = []; let mx = 0, mn = 0, up = null;
+  for (let i = 1; i < n; i++) {   // sommets et fonds de vallée (seuil 30 m)
+    const y = sm[i]; if (y > sm[mx]) mx = i; if (y < sm[mn]) mn = i;
+    if (up !== false && sm[mx] - y >= T) { ex.push({ i: mx, t: 'max' }); up = false; mx = mn = i; }
+    else if (up !== true && y - sm[mn] >= T) { ex.push({ i: mn, t: 'min' }); up = true; mx = mn = i; }
+  }
+  if (up === true && sm[mx] - sm[mn] >= T) ex.push({ i: mx, t: 'max' });
+  const climbs = [];
+  ex.forEach((e, k) => {
+    if (e.t !== 'max') return;
+    const pv = ex.slice(0, k).reverse().find((x) => x.t === 'min'), nx = ex.slice(k + 1).find((x) => x.t === 'min'), v = pv ? pv.i : 0;
+    const start = pts[v][0], km = pts[e.i][0], len = km - start, gain = Math.round(sm[e.i] - sm[v]);
+    if (gain < 40 || len < 0.4) return;
+    climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : nx ? pts[nx.i][0] - km : Math.min(3, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
+  });
+  const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
+  const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
+  const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
+  const sprints = Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
+  const cobbles = (D.cobbles || []).map((c, i, a) => ({ from: c.from, to: c.to, stars: clamp(Math.round(1 + (i / a.length) * 3 + R(-0.8, 1.2)), 1, 5), n: a.length - i }));
+  cobbles.slice(-2).forEach((s) => (s.stars = Math.max(s.stars, 4)));
+  const wind = [], nw = type === 'FLAT' || type === 'COBBLES' ? (dist < 100 ? 1 : I(1, 3)) : 0;
+  for (let a = 0; a < 40 && wind.length < nw; a++) {
+    const len = R(4, 12), from = R(dist * 0.2, Math.max(dist * 0.2 + 1, dist * 0.8 - len)), to = from + len;
+    if (to > dist - 4 || climbs.some((c) => ov(from, to, c.start, c.km + c.dlen)) || cobbles.some((c) => ov(from, to, c.from - 1, c.to + 1)) || wind.some((x) => ov(from, to, x.from - 2, x.to + 2))) continue;
+    wind.push({ from: +from.toFixed(1), to: +to.toFixed(1), dir: rng() < 0.5 ? 'L' : 'R' });
+  }
+  wind.sort((a, b) => a.from - b.from);
+  const alts = pts.map((p) => p[1]);
+  return { raceId: race.id, name: race.name || 'Étape', type, km: dist, points: pts, climbs, sprints, cobbles, wind, minAlt: Math.min(...alts), maxAlt: Math.max(...alts) };
+}
+
+// Admin : glisser une image de profil + nom + date → l'étape est créée dans le calendrier
+async function renderStageImport(c) {
+  const TYPES = [['AUTO', 'Automatique'], ['FLAT', 'Plat'], ['HILLS', 'Vallonné'], ['MOUNTAIN', 'Montagne'], ['COBBLES', 'Pavés'], ['TIME_TRIAL', 'Contre-la-montre']], CATS = ['1.1', '1.Pro', '1.UWT', '2.1', '2.Pro', '2.UWT'].map((x) => [x, x]);
+  c.innerHTML = `<div class="panel"><h4>Admin : importer le profil d'une étape</h4><div class="adm-grid">
+      <div><label>Nom de l'étape</label><input id="si-name"></div><div><label>Date</label><input id="si-date" type="date" value="${state.game.game_date}"></div>
+      <div><label>Distance (km)</label><input id="si-km" type="number" min="10" step="1" value="150"></div><div><label>Altitude minimale (m)</label><input id="si-amin" type="number" value="0"></div>
+      <div><label>Altitude maximale (m)</label><input id="si-amax" type="number" value="150"></div><div><label>Type de course</label>${selHtml('si-type', TYPES, 'AUTO')}</div>
+      <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div></div>
+    <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG), ou cliquez pour la choisir</div><input id="si-file" type="file" accept="image/*" hidden>
+    <div id="si-prev"></div><div class="err" id="si-err"></div><div class="rov-btns"><button id="si-save" disabled>Générer l'étape</button></div></div>`;
+  let img = null, P = null, D = null; const val = (id) => $(id).value;
+  const build = () => {
+    if (!img) return; $('si-err').textContent = '';
+    try {
+      const km = Math.max(10, Math.round(+val('si-km'))), D0 = simAnalyzeProfileImage(img, km, +val('si-amin'), +val('si-amax')), tmp = { name: val('si-name') || 'Étape', distance_km: km, profile_type: 'FLAT', profile_data: D0 };
+      let type = val('si-type');
+      if (type === 'AUTO') { const asc = simProfileFromData(tmp).climbs.reduce((s, x) => s + x.gain, 0); type = D0.cobbles.length >= 3 ? 'COBBLES' : asc / km < 8 ? 'FLAT' : asc / km < 22 ? 'HILLS' : 'MOUNTAIN'; }
+      D = { ...D0, type }; P = simProfileFromData({ ...tmp, profile_type: type, profile_data: D });
+      $('si-prev').innerHTML = `<div class="muted" style="margin:.6rem 0">${PROFILES[type] || type} · ${P.km} km · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div>${renderRaceProfileSVG(P, 0, [])}`;
+      $('si-save').disabled = false;
+    } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
+  };
+  const load = (f) => { if (!f || !f.type.startsWith('image/')) return; const im = new Image(); im.onload = () => { img = im; build(); }; im.src = URL.createObjectURL(f); $('si-drop').textContent = 'Image chargée : ' + f.name + ' (glissez-en une autre pour la remplacer)'; };
+  const dz = $('si-drop');
+  dz.onclick = () => $('si-file').click(); $('si-file').onchange = (e) => load(e.target.files[0]);
+  dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('on'); }; dz.ondragleave = () => dz.classList.remove('on');
+  dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove('on'); load(e.dataTransfer.files[0]); };
+  ['si-km', 'si-amin', 'si-amax', 'si-type', 'si-name'].forEach((id) => ($(id).oninput = build));
+  $('si-save').onclick = async () => {
+    const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
+    if (!name || !date || !P) return (err.textContent = "Nom, date et image du profil sont obligatoires.");
+    $('si-save').disabled = true;
+    const { error } = await sb.from('races').insert({ name, date, status: 'SCHEDULED', profile_type: P.type, distance_km: P.km, elevation_m: Math.round(P.climbs.reduce((s, x) => s + x.gain, 0)), category: val('si-cat'), travel_km: +val('si-travel') || 0, profile_data: D });
+    if (error) { $('si-save').disabled = false; return (err.textContent = error.message); }
+    toast(`Étape « ${name} » créée le ${fmtShort(date)}.`); await loadGame();
+  };
 }

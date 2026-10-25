@@ -242,7 +242,7 @@ async function continueGame() {
 
 function viewGame() {
   const t = state.team, g = state.game, d = gd(g.game_date);
-  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin']);
+  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes']);
   const quick = [['portal|messages', 'Messages'], ['squad|squad', 'Équipe première'], ['recruit|search', 'Base de données cyclistes'], ['recruit|market', 'Marché des transferts'], ['portal|competitions', 'Compétitions']];
   const nr = state.nextRace, n = nr ? daysUntil(nr.date) : null;
   $app.innerHTML = `
@@ -275,6 +275,7 @@ function viewGame() {
 async function renderTab() {
   const c = $('content'), tab = state.tab;
   if (tab === 'competitions') return renderLiveRaceDashboard(c);
+  if (tab === 'stageimp') return renderStageImport(c);
   if (tab === 'rider') return renderRider(c);
   if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);

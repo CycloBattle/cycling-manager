@@ -108,10 +108,10 @@ function renderRaceProfileSVG(P, currentKm = 0, groups = [], view = { zoom: 1, c
   const labels = P.cobbles.filter((c) => c.to >= v0 && c.from <= v1 && X(Math.min(c.to, v1)) - X(Math.max(c.from, v0)) > 14).map((c) => `<text x="${X((Math.max(c.from, v0) + Math.min(c.to, v1)) / 2)}" y="${base + 19}" text-anchor="middle" font-size="8" fill="#f59e0b">${'★'.repeat(c.stars)}</text>`).join('');
   const pins = P.climbs.map((c) => pin(c.km, c.cat, c.cat === 'HC' ? '#7f1d1d' : '#db2777', c.cat === 'HC' ? 11 : 9, `Col de catégorie ${c.cat} : ${c.len.toFixed(1)} km à ${c.grad} % (+${c.gain} m) · km ${c.km.toFixed(0)}`)).join('')
     + P.sprints.map((s, i) => pin(s.km, 'S', '#10b981', 9, `Sprint intermédiaire n°${i + 1} · km ${s.km}`)).join('');
-  const marks = groups.filter((g) => g.km >= v0 - 1 && g.km <= v1 + 1).map((g, i) => {
-    const [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'], x = X(g.km), y = Y(profileAlt(P, g.km)), ly = Math.max(12, y - 16 - (i % 3) * 13), label = `${g.name || nm} · ${g.riders ?? '?'}`;
-    return `<g class="sim-g" data-simg="${esc(g.id)}"><title>${esc(label)}${g.gap != null ? ' · ' + simGap(g.gap) : ''}</title><line x1="${x}" y1="${ly + 3}" x2="${x}" y2="${y}" stroke="${col}" stroke-width="1.5"/>
-      <circle cx="${x}" cy="${y}" r="6.5" fill="${col}" stroke="#fff" stroke-width="1.8"/><text x="${x}" y="${ly}" text-anchor="middle" font-size="10" font-weight="700" fill="#fff" stroke="#0b1020" stroke-width="3" paint-order="stroke">${esc(label)}</text></g>`;
+  const marks = groups.filter((g) => g.km >= v0 - 1 && g.km <= v1 + 1).map((g) => {
+    const [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'], x = X(g.km), y = Y(profileAlt(P, g.km)), ly = Math.max(14, y - 20), label = `${g.name || nm} · ${g.riders ?? '?'}`;
+    return `<g class="sim-g" data-simg="${esc(g.id)}"><title>${esc(label)}${g.gap != null ? ' · ' + simGap(g.gap) : ''}</title><line x1="${x}" y1="${ly}" x2="${x}" y2="${y}" stroke="${col}" stroke-width="1.5"/>
+      <circle cx="${x}" cy="${ly}" r="3" fill="${col}"/><circle cx="${x}" cy="${y}" r="6.5" fill="${col}" stroke="#fff" stroke-width="1.8"/></g>`;
   }).join('');
   const startM = v0 <= 0.01 ? `<line x1="${X(0)}" y1="12" x2="${X(0)}" y2="${base}" stroke="#fff" stroke-width="1.4"/><circle cx="${X(0)}" cy="12" r="8" fill="#0b1020" stroke="#fff"/><path d="M${X(0) - 2} 8.5l5 3.5-5 3.5z" fill="#fff"/>` : '';
   const endM = v1 >= dist - 0.01 ? `<line x1="${X(dist)}" y1="12" x2="${X(dist)}" y2="${base}" stroke="#fff" stroke-width="1.4"/><circle cx="${X(dist)}" cy="12" r="8" fill="url(#simChk)" stroke="#fff"/>` : '';

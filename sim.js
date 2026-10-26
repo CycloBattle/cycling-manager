@@ -32,7 +32,7 @@ function generateRaceProfile(race) {
     if (len > slot / 1.7) { len = slot / 1.7; gain = len * 10 * gr; }
     const top = type === 'MOUNTAIN' && i === n - 1 && rng() < 0.5;                         // arrivée au sommet
     const start = top ? dist - len : lo + i * slot + R(0, Math.max(0, slot - len * 1.7));
-    climbs.push({ start, km: start + len, len, gain: Math.round(gain), grad: +(gain / (len * 10)).toFixed(1), dlen: top ? 0 : len * 0.6, cat: simCat(gain), top });
+    climbs.push({ start, km: start + len, len, gain: Math.round(gain), grad: +(gain / (len * 10)).toFixed(1), dlen: top ? 0 : len * 0.6, cat: simCat(gain, len), top });
   }
   const base = R(cfg.base[0], cfg.base[1]), p1 = R(0, 6.28), p2 = R(0, 6.28), smooth = (x) => { x = clamp(x, 0, 1); return 0.7 * x + 0.3 * x * x * (3 - 2 * x); };
   const alt = (km) => {
@@ -49,7 +49,7 @@ function generateRaceProfile(race) {
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
   const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
   const sprints = Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
-  
+
   // Secteurs pavés (course de type COBBLES) : de plus en plus durs vers l'arrivée
   const cobbles = [];
   if (type === 'COBBLES') {
@@ -154,7 +154,7 @@ function mountRaceProfile(el, profile, getState, onGroup) {
   return { view, update: draw };
 }
 
-// Écran de démonstration (PORTAIL → Compétitions) : choix de la course, profil généré, groupes déplaçables avec le curseur
+// Écran de démonstration (non utilisé : l'écran réel est renderLiveRaceDashboard dans raceEngine.js)
 async function renderRaceLive(c) {
   c.innerHTML = '<p class="muted pad">Chargement…</p>';
   const { data } = await sb.from('races').select('*').order('date'), races = data || [];
@@ -177,6 +177,7 @@ async function renderRaceLive(c) {
   $('sim-pos').oninput = (e) => { pos = +e.target.value; $('sim-pos-v').textContent = pos; m.update(); };
   $('sim-race').onchange = (e) => { state.simRace = e.target.value; renderRaceLive(c); };
 }
+
 /* ===== Étape générée depuis une image de profil ===== */
 // Analyse l'image : courbe d'altitude (zone verte ou grise), secteurs pavés (zones grises)
 function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
@@ -233,8 +234,17 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
       }
     }
   }
-  const pa = points.map((p) => p[1]), icons = (extra.icons || []).map((i) => ({ ...i, km: +(i.f * dist).toFixed(1) }));
-  return { km: dist, altMin: extra.cal ? Math.min(...pa) : altMin, altMax: extra.cal ? Math.max(...pa) : altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks, icons, geo: { W, Hh, x0, x1, base, tops } };
+  const anc = extra.anchors || [];
+  if (anc.length) {   // points d'altitude placés à la main : correction interpolée entre les ancres (la forme du profil est conservée)
+    const A = anc.map((a) => { const i = points.reduce((b, p, k) => (Math.abs(p[0] - a.km) < Math.abs(points[b][0] - a.km) ? k : b), 0); return { km: points[i][0], off: a.alt - points[i][1] }; }).sort((p, q) => p.km - q.km);
+    points.forEach((p) => {
+      let o; const j = A.findIndex((a) => a.km >= p[0]);
+      if (j === 0) o = A[0].off; else if (j < 0) o = A[A.length - 1].off; else { const a0 = A[j - 1], a1 = A[j]; o = a1.km === a0.km ? a1.off : a0.off + ((a1.off - a0.off) * (p[0] - a0.km)) / (a1.km - a0.km); }
+      p[1] = Math.max(0, Math.round(p[1] + o));
+    });
+  }
+  const pa = points.map((p) => p[1]), icons = (extra.icons || []).map((i) => ({ ...i, km: +(i.f * dist).toFixed(1) })), fixed = extra.cal || anc.length;
+  return { km: dist, altMin: fixed ? Math.min(...pa) : altMin, altMax: fixed ? Math.max(...pa) : altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks, icons, manual: !!extra.manual, anchors: anc, geo: { W, Hh, x0, x1, base, tops } };
 }
 
 // Construit le profil complet (cols, sprints, pavés, vent) à partir des points enregistrés
@@ -243,8 +253,8 @@ function simProfileFromData(race) {
   const rng = simRng(String(race.id || race.name || 'etape') + type), R = (a, b) => a + rng() * (b - a), I = (a, b) => Math.floor(R(a, b + 1)), clamp = (v, a, b) => Math.max(a, Math.min(b, v)), ov = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
   const sm = pts.map((p, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) { s += pts[j][1]; c++; } return s / c; });
   const rangeA = Math.max(20, (D.altMax ?? 150) - (D.altMin ?? 0)), T = Math.max(8, rangeA * 0.035), climbs = [];
-  if (D.icons?.some((i) => i.kind === 'climb')) {   // cols = icônes de catégorie lues sur l'image
-    D.icons.filter((i) => i.kind === 'climb').forEach((ic) => {
+  if (D.manual || D.icons?.some((i) => i.kind === 'climb')) {   // mode manuel : seuls vos cols existent, aucune détection automatique
+    (D.icons || []).filter((i) => i.kind === 'climb').forEach((ic) => {
       let s = 0, best = -1e9; pts.forEach((p, i) => { if (Math.abs(p[0] - ic.km) <= 1.5 && sm[i] > best) { best = sm[i]; s = i; } });
       let vv = s; for (let i = s - 1; i >= 0 && pts[s][0] - pts[i][0] <= 25; i--) { if (sm[i] < sm[vv]) vv = i; else if (sm[i] - sm[vv] > T) break; }
       let nn = s; for (let i = s + 1; i < n; i++) { if (sm[i] < sm[nn]) nn = i; else if (sm[i] - sm[nn] > T) break; }
@@ -270,7 +280,7 @@ function simProfileFromData(race) {
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
   const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
-    const sprints = D.icons?.length ? D.icons.filter((i) => i.kind === 'sprint').map((i) => ({ km: i.km })) : Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
+  const sprints = D.manual || D.icons?.length ? (D.icons || []).filter((i) => i.kind === 'sprint').map((i) => ({ km: i.km })) : Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
   const cobbles = (D.cobbles || []).map((c, i, a) => ({ from: c.from, to: c.to, stars: clamp(Math.round(1 + (i / a.length) * 3 + R(-0.8, 1.2)), 1, 5), n: a.length - i }));
   cobbles.slice(-2).forEach((s) => (s.stars = Math.max(s.stars, 4)));
   const wind = [], nw = type === 'FLAT' || type === 'COBBLES' ? (dist < 100 ? 1 : I(1, 3)) : 0;
@@ -291,12 +301,14 @@ async function renderStageImport(c) {
       <div><label>Nom de l'étape</label><input id="si-name"></div><div><label>Date</label><input id="si-date" type="date" value="${state.game.game_date}"></div>
       <div><label>Distance (km)</label><input id="si-km" type="number" min="10" step="1" value="150"></div><div><label>Altitude minimale (m)</label><input id="si-amin" type="number" value="0"></div>
       <div><label>Altitude maximale (m)</label><input id="si-amax" type="number" value="150"></div><div><label>Type de course</label>${selHtml('si-type', TYPES, 'AUTO')}</div>
-      <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div></div>
+      <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div>
+      <div><label>Tag (ex. #tdf2026)</label><input id="si-tag" placeholder="#tdf2026"></div></div>
     <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG), ou cliquez pour la choisir</div><input id="si-file" type="file" accept="image/*" hidden>
     <div id="si-prev"></div><div class="err" id="si-err"></div><div class="rov-btns"><button id="si-save" disabled>Générer l'étape</button></div></div>`;
-    let img = null, P = null, D = null, info = null; const val = (id) => $(id).value;
+  let img = null, P = null, D = null, info = null; const val = (id) => $(id).value;
   const build = () => {
     if (!img) return; $('si-err').textContent = '';
+    const mode0 = $('si-mode') ? $('si-mode').value : '3';
     try {
       const km = Math.max(10, Math.round(+val('si-km'))), { geo, ...D0 } = simAnalyzeProfileImage(img, km, +val('si-amin'), +val('si-amax'), info || {});
       const tmp = { name: val('si-name') || 'Étape', distance_km: km, profile_type: 'FLAT', profile_data: D0 };
@@ -304,9 +316,11 @@ async function renderStageImport(c) {
       if (type === 'AUTO') { const asc = simProfileFromData(tmp).climbs.reduce((s, x) => s + x.gain, 0); type = D0.cobbles.length >= 3 ? 'COBBLES' : asc / km < 8 ? 'FLAT' : asc / km < 22 ? 'HILLS' : 'MOUNTAIN'; }
       D = { ...D0, type }; P = simProfileFromData({ ...tmp, profile_type: type, profile_data: D });
       if (info?.cal) { $('si-amin').value = D0.altMin; $('si-amax').value = D0.altMax; }
-      $('si-prev').innerHTML = `<div class="muted" style="margin:.6rem 0">${PROFILES[type] || type} · ${P.km} km · ${P.altMin ?? P.minAlt}-${P.maxAlt} m · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div>
+      $('si-prev').innerHTML = `<div class="muted" style="margin:.6rem 0">${PROFILES[type] || type} · ${P.km} km · ${P.minAlt}-${P.maxAlt} m · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div>
         <div class="muted" style="font-size:.78rem;margin-bottom:.4rem">${P.climbs.map((c) => `km ${c.km.toFixed(1)} : ${esc(c.name || 'Col')} (cat. ${c.cat}, +${c.gain} m, ${c.grad} %)`).join(' · ') || 'Aucun col détecté.'}${P.sprints.length ? ' · Sprints : km ' + P.sprints.map((s) => s.km).join(', ') : ''}</div>${renderRaceProfileSVG(P, 0, [])}`;
       $('si-save').disabled = false;
+      $('si-prev').insertAdjacentHTML('beforeend', siEditorHTML(P, (info && info.anchors) || [], mode0));
+      siBindEditor(P, km, build, () => info, (d) => { info = info || {}; Object.assign(info, d, { manual: true }); });
     } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
   };
   const load = (f) => {
@@ -334,11 +348,12 @@ async function renderStageImport(c) {
     const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
     if (!name || !date || !P) return (err.textContent = 'Nom, date et image du profil sont obligatoires.');
     $('si-save').disabled = true;
-    const { error } = await sb.from('races').insert({ name, date, status: 'SCHEDULED', profile_type: P.type, distance_km: P.km, elevation_m: Math.round(P.climbs.reduce((s, x) => s + x.gain, 0)), category: val('si-cat'), travel_km: +val('si-travel') || 0, profile_data: D });
+    const { error } = await sb.from('races').insert({ name, date, status: 'SCHEDULED', profile_type: P.type, distance_km: P.km, elevation_m: Math.round(P.climbs.reduce((s, x) => s + x.gain, 0)), category: val('si-cat'), travel_km: +val('si-travel') || 0, tag: siTag(val('si-tag')), profile_data: D });
     if (error) { $('si-save').disabled = false; return (err.textContent = error.message); }
     toast(`Étape « ${name} » créée le ${fmtShort(date)}.`); await loadGame();
   };
 }
+
 /* ===== Lecture automatique de l'image : texte (OCR), échelle d'altitude, icônes de cols et de sprints ===== */
 function simPixelsOf(img, W) {
   const Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas'); cv.width = W; cv.height = Hh;
@@ -417,33 +432,82 @@ async function simReadProfileText(img, g, onProgress) {
   }).sort((a, b) => a.f - b.f);
   return { name, dist, cal, icons: out };
 }
-/* ===== Éditeur de cols / sprints et contrôle des altitudes ===== */
+
+/* ===== Éditeur manuel : cols, sprints, points d'altitude ===== */
 function siMaxGrade(P) {
   const pts = P.points; let mg = 0;
   for (let i = 0; i < pts.length; i++) { const j = pts.findIndex((p) => p[0] >= pts[i][0] + 2); if (j < 0) break; mg = Math.max(mg, (pts[j][1] - pts[i][1]) / ((pts[j][0] - pts[i][0]) * 10)); }
   return mg;
 }
-function siEditorHTML(P) {
-  const cats = ['4', '3', '2', '1', 'HC'], mg = siMaxGrade(P);
-  const row = (kind, km, cat, name, info) => `<tr data-sir="${kind}"><td>${kind === 'climb' ? 'Col' : 'Sprint'}</td><td><input data-sie="km" type="number" step="0.1" value="${(+km).toFixed(1)}" style="width:80px"></td>
-    <td>${kind === 'climb' ? `<select data-sie="cat">${cats.map((c) => `<option ${c === String(cat) ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '-'}</td>
-    <td><input data-sie="name" value="${esc(name || '')}" style="width:170px"></td><td class="muted">${info || ''}</td><td><input data-sie="del" type="checkbox"></td></tr>`;
-  return `<div class="panel" style="margin-top:.7rem"><h4>Vérification des cols et des altitudes</h4>
-    <div class="stat-row"><span>Pente maximale sur 2 km</span><b class="${mg > 14 ? 'down' : 'up'}">${mg.toFixed(1)} %</b></div>
-    ${mg > 14 ? `<p class="down" style="font-size:.85rem">Pentes irréalistes : l'altitude maximale est trop élevée et fausserait la simulation.</p><button type="button" data-sie="fit">Ajuster l'altitude max automatiquement</button>` : '<p class="muted" style="font-size:.85rem">Altitudes cohérentes. Corrigez ci-dessous toute catégorie ou position erronée.</p>'}
-    <div class="tbl"><table class="fm sq"><thead><tr><th>Type</th><th>Km</th><th>Catégorie</th><th>Nom</th><th>Dénivelé / pente</th><th>Suppr.</th></tr></thead><tbody>
-    ${P.climbs.map((c) => row('climb', c.km, c.cat, c.name, `+${c.gain} m · ${c.grad} %`)).join('')}${P.sprints.map((s) => row('sprint', s.km, '', '', '')).join('')}</tbody></table></div>
-    <div class="rov-btns"><button type="button" data-sie="addc">Ajouter un col</button><button type="button" data-sie="adds">Ajouter un sprint</button></div></div>`;
+function siEditorHTML(P, anchors = [], mode = '3') {
+  const cats = ['4', '3', '2', '1', 'HC'], mg = siMaxGrade(P), del = '<td><input data-sie="del" type="checkbox"></td>';
+  const kmI = (v) => `<td><input data-sie="km" type="number" step="0.1" value="${(+v).toFixed(1)}" style="width:80px"></td>`;
+  const row = (kind, km, cat, name, info) => `<tr data-sir="${kind}"><td>${kind === 'climb' ? 'Col' : 'Sprint'}</td>${kmI(km)}<td>${kind === 'climb' ? `<select data-sie="cat">${cats.map((c) => `<option ${c === String(cat) ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '-'}</td>
+    <td><input data-sie="name" value="${esc(name || '')}" style="width:170px"></td><td class="muted">${info || ''}</td>${del}</tr>`;
+  const arow = (a) => `<tr data-sir="alt"><td>Altitude</td>${kmI(a.km)}<td><input data-sie="alt" type="number" step="1" value="${Math.round(a.alt)}" style="width:80px"> m</td><td class="muted">point d'altitude imposé</td><td></td>${del}</tr>`;
+  const modes = [['3', 'Col de catégorie 3'], ['2', 'Col de catégorie 2'], ['1', 'Col de catégorie 1'], ['HC', 'Col hors catégorie'], ['4', 'Col de catégorie 4'], ['S', 'Sprint intermédiaire'], ['alt', "Point d'altitude"]];
+  return `<div class="panel" style="margin-top:.7rem"><h4>Placement manuel des cols, sprints et altitudes</h4>
+    <div class="sq-bar"><div class="sq-ctl"><label style="margin:0">Clic sur le profil = placer :</label>${selHtml('si-mode', modes, mode)}</div>
+      <div class="stat-row" style="min-width:260px"><span>Pente max. sur 2 km</span><b class="${mg > 14 ? 'down' : 'up'}">${mg.toFixed(1)} %</b></div></div>
+    <p class="muted" style="font-size:.82rem">Cliquez sur le profil ci-dessus pour poser un point à cet endroit. Un « point d'altitude » force l'altitude réelle à ce kilomètre (le reste du profil est recalé entre vos points). Modifiez ou supprimez les lignes dans le tableau.</p>
+    ${mg > 14 ? '<button type="button" data-sie="fit">Ajuster l\'altitude max automatiquement</button>' : ''}
+    <div class="tbl"><table class="fm sq"><thead><tr><th>Type</th><th>Km</th><th>Catégorie / altitude</th><th>Nom</th><th>Dénivelé / pente</th><th>Suppr.</th></tr></thead><tbody>
+    ${P.climbs.map((c) => row('climb', c.km, c.cat, c.name, `+${c.gain} m · ${c.grad} %`)).join('')}${P.sprints.map((s) => row('sprint', s.km, '', '', '')).join('')}${anchors.map(arow).join('')}</tbody></table></div>
+    <div class="rov-btns"><button type="button" data-sie="addc">Ajouter un col</button><button type="button" data-sie="adds">Ajouter un sprint</button><button type="button" data-sie="adda">Ajouter un point d'altitude</button></div></div>`;
 }
-function siBindEditor(P, km, rebuild, getInfo, setIcons) {
-  const box = $('si-prev'), read = () => [...box.querySelectorAll('tr[data-sir]')].filter((r) => !r.querySelector('[data-sie="del"]').checked).map((r) => {
-    const q = (k) => r.querySelector(`[data-sie="${k}"]`);
-    return { kind: r.dataset.sir, f: Math.max(0, Math.min(1, +q('km').value / km)), cat: r.dataset.sir === 'climb' ? q('cat').value : null, name: q('name').value };
-  });
-  box.querySelectorAll('input[data-sie], select[data-sie]').forEach((el) => (el.onchange = () => { setIcons(read()); rebuild(); }));
+function siBindEditor(P, km, rebuild, getInfo, setData) {
+  const box = $('si-prev'), cl = (v) => Math.max(0, Math.min(km, +v || 0)), q = (r, k) => r.querySelector(`[data-sie="${k}"]`);
+  const read = () => {
+    const rows = [...box.querySelectorAll('tr[data-sir]')].filter((r) => !q(r, 'del').checked);
+    return { icons: rows.filter((r) => r.dataset.sir !== 'alt').map((r) => ({ kind: r.dataset.sir, f: cl(q(r, 'km').value) / km, cat: r.dataset.sir === 'climb' ? q(r, 'cat').value : null, name: q(r, 'name').value })),
+      anchors: rows.filter((r) => r.dataset.sir === 'alt').map((r) => ({ km: cl(q(r, 'km').value), alt: Math.max(0, +q(r, 'alt').value || 0) })) };
+  };
+  const apply = (d) => { setData(d); rebuild(); };
+  box.querySelectorAll('input[data-sie], select[data-sie]').forEach((el) => (el.onchange = () => apply(read())));
   box.querySelectorAll('button[data-sie]').forEach((b) => (b.onclick = () => {
-    const a = b.dataset.sie;
-    if (a === 'fit') { const amin = +$('si-amin').value, amax = +$('si-amax').value, mg = siMaxGrade(P); $('si-amax').value = Math.round(amin + ((amax - amin) * 11) / mg); const i = getInfo(); if (i) i.cal = null; setIcons(read()); rebuild(); }
-    else { setIcons([...read(), a === 'addc' ? { kind: 'climb', f: 0.5, cat: '3', name: '' } : { kind: 'sprint', f: 0.5, cat: null, name: '' }]); rebuild(); }
+    const a = b.dataset.sie, d = read();
+    if (a === 'fit') { const amin = +$('si-amin').value, amax = +$('si-amax').value, mg = siMaxGrade(P); $('si-amax').value = Math.round(amin + ((amax - amin) * 11) / mg); const i = getInfo(); if (i) i.cal = null; return apply(d); }
+    if (a === 'addc') d.icons.push({ kind: 'climb', f: 0.5, cat: '3', name: '' });
+    else if (a === 'adds') d.icons.push({ kind: 'sprint', f: 0.5, cat: null, name: '' });
+    else d.anchors.push({ km: Math.round(km / 2), alt: Math.round(profileAlt(P, km / 2)) });
+    apply(d);
   }));
+  const svg = box.querySelector('svg.sim-svg');
+  if (svg) {
+    svg.style.cursor = 'crosshair';
+    svg.onclick = (e) => {
+      const r = svg.getBoundingClientRect(), k = Math.round(cl(((((e.clientX - r.left) * 1000) / r.width - 14) / 972) * km) * 10) / 10, m = $('si-mode').value, d = read();
+      if (m === 'alt') { const v = prompt(`Altitude réelle (m) au km ${k} :`, Math.round(profileAlt(P, k))); if (v === null || isNaN(+v) || v === '') return; d.anchors.push({ km: k, alt: Math.max(0, +v) }); }
+      else if (m === 'S') d.icons.push({ kind: 'sprint', f: k / km, cat: null, name: '' });
+      else d.icons.push({ kind: 'climb', f: k / km, cat: m, name: '' });
+      apply(d);
+    };
+  }
+}
+
+/* ===== Courses et tags (ex. #tdf2026) ===== */
+const siTag = (t) => { const s = String(t || '').trim().toLowerCase().replace(/[^a-z0-9_àâçéèêëîïôûùüÿ]/g, ''); return s ? '#' + s : null; };
+
+async function renderRaceManager(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const { data, error } = await sb.from('races').select('id, name, date, status, tag, distance_km, profile_type').order('date');
+  if (error) { c.innerHTML = `<div class="panel"><p class="err">${esc(error.message)} : lancez le script SQL du tag dans Supabase.</p></div>`; return; }
+  const races = data || [], tags = [...new Set(races.map((r) => r.tag).filter(Boolean))].sort(), f = state.rmTag || 'all';
+  const rows = races.filter((r) => f === 'all' || (f === 'none' ? !r.tag : r.tag === f)), n = (t) => races.filter((r) => r.tag === t).length;
+  c.innerHTML = `<div class="panel"><h4>Admin : courses et tags</h4>
+    <div class="sq-bar"><div class="sq-ctl">${selHtml('rm-f', [['all', `Toutes les courses (${races.length})`], ['none', 'Sans tag'], ...tags.map((t) => [t, `${t} (${n(t)})`])], f)}</div>
+      <div class="sq-ctl"><input id="rm-tag" placeholder="#tdf2026" style="width:140px"><button id="rm-apply">Appliquer aux courses cochées</button><button class="danger" id="rm-clear">Retirer le tag des cochées</button></div></div>
+    <div class="tbl"><table class="fm sq"><thead><tr><th><input type="checkbox" id="rm-all"></th><th>Date</th><th>Course</th><th>Type</th><th>Km</th><th>Tag</th><th>Statut</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr><td><input type="checkbox" data-rm="${r.id}"></td><td>${fmtShort(r.date)}</td><td>${esc(r.name)}</td><td>${PROFILES[r.profile_type] || r.profile_type || '-'}</td><td>${r.distance_km || '-'}</td><td>${r.tag ? `<span class="bd spec">${esc(r.tag)}</span>` : '-'}</td><td>${esc(r.status)}</td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucune course.</td></tr>'}</tbody></table></div></div>`;
+  const ids = () => [...c.querySelectorAll('[data-rm]:checked')].map((x) => x.dataset.rm);
+  $('rm-f').onchange = (e) => { state.rmTag = e.target.value; renderRaceManager(c); };
+  $('rm-all').onchange = (e) => c.querySelectorAll('[data-rm]').forEach((x) => (x.checked = e.target.checked));
+  const save = async (tag) => {
+    const sel = ids(); if (!sel.length) return toast('Cochez au moins une course.');
+    const { error: er } = await sb.from('races').update({ tag }).in('id', sel);
+    if (er) return toast(er.message);
+    toast(tag ? `Tag ${tag} appliqué à ${sel.length} course(s).` : 'Tag retiré.'); renderRaceManager(c);
+  };
+  $('rm-apply').onclick = () => { const t = siTag($('rm-tag').value); if (!t) return toast('Saisissez un tag (ex. #tdf2026).'); save(t); };
+  $('rm-clear').onclick = () => save(null);
 }

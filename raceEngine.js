@@ -357,7 +357,7 @@ async function renderLiveRaceDashboard(c) {
   c.innerHTML = `<div class="rd-grid" id="re-root">
     <div class="panel rd-instr"><h4>Instructions collectives et stratégie</h4><div class="rd-orders">${Object.entries(RE_ORDERS).map(([k, l]) => `<button data-reord="${k}">${l}</button>`).join('')}</div>
       <p class="muted" id="re-order" style="margin-top:.6rem"></p></div>
-    <div class="panel rd-profile"><h4>Profil de la course en direct</h4><div class="sq-bar"><div class="sq-ctl">${selHtml('re-race', races.map((r) => [r.id, `${r.name} (${PROFILES[r.profile_type] || r.profile_type})`]), pick.id)}</div>
+    <div class="panel rd-profile"><h4>Profil de la course en direct</h4><div class="sq-bar"><div class="sq-ctl">${selHtml('re-race', races.map((r) => [r.id, `${r.name}${r.tag ? ' ' + r.tag : ''} (${PROFILES[r.profile_type] || r.profile_type})`]), pick.id)}</div>
       <div class="muted">${P.km} km · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s)</div></div><div id="re-profile"></div></div>
     <div class="panel rd-radio"><h4>Radio Tour et journal de course</h4><div id="re-journal" class="re-journal"></div></div>
     <div class="panel rd-bottom"><h4>Marqueurs de groupes</h4><div id="re-groups"></div><h4 style="margin-top:1rem">Mon équipe</h4><div id="re-team"></div></div>

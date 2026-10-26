@@ -183,58 +183,91 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax) {
   const W = Math.min(1600, img.naturalWidth), Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas');
   cv.width = W; cv.height = Hh; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
   const px = cx.getImageData(0, 0, W, Hh).data;
+  const isG = (r, g, b) => g > 110 && g > r + 8 && g > b + 35, isW = (r, g, b) => r > 45 && r - b > 22 && g >= b && r >= g - 10, isP = (r, g, b) => r > 170 && b > g + 25 && g < 120;
+  let ng = 0, nw = 0; for (let i = 0; i < px.length; i += 16) { if (isG(px[i], px[i + 1], px[i + 2])) ng++; else if (isW(px[i], px[i + 1], px[i + 2])) nw++; }
+  const warm = nw > ng;                                                                            // profil jaune-orange sur fond sombre, sinon terrain vert / pavés gris
   const kind = (x, y) => { const i = (y * W + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2];
-    if (g > 110 && g > r + 8 && g > b + 35) return 1;                                              // terrain vert
-    if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r >= 95 && r <= 205) return 2;            // secteur pavé (gris)
+    if (warm) return isW(r, g, b) ? 1 : 0;
+    if (isG(r, g, b)) return 1;
+    if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r >= 95 && r <= 205) return 2;
     return 0; };
-  const top = new Array(W).fill(-1), bot = new Array(W).fill(-1);
-  for (let x = 0; x < W; x++) for (let y = 0; y < Hh - 8; y++) {
-    let ok = true; for (let k = 0; k < 8; k++) if (!kind(x, y + k)) { ok = false; break; }
+  const K = warm ? 2 : 8, minT = warm ? 1 : 6, win = warm ? 1 : 4, top = new Array(W).fill(-1), bot = new Array(W).fill(-1);
+  for (let x = 0; x < W; x++) for (let y = 0; y < Hh - K; y++) {
+    let ok = true; for (let k = 0; k < K; k++) if (!kind(x, y + k)) { ok = false; break; }
     if (!ok) continue;
     let b = y; while (b < Hh - 1 && (kind(x, b + 1) || kind(x, b + 2))) b++;
     top[x] = y; bot[x] = b; break;
   }
-  const v = (x) => top[x] >= 0 && bot[x] - top[x] >= 6; let x0 = -1, x1 = -1;
+  const v = (x) => top[x] >= 0 && bot[x] - top[x] >= minT; let x0 = -1, x1 = -1;
   for (let x = 0; x < W - 10 && x0 < 0; x++) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x + k)) { ok = false; break; } if (ok) x0 = x; }
   for (let x = W - 1; x >= 10 && x1 < 0; x--) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x - k)) { ok = false; break; } if (ok) x1 = x; }
-  if (x0 < 0 || x1 <= x0 + 20) throw new Error('Profil non détecté : utilisez une image avec une zone verte ou grise bien visible.');
+  if (x0 < 0 || x1 <= x0 + 20) throw new Error('Profil non détecté : utilisez une image avec un relief jaune-orange, vert ou gris bien visible.');
   const med = (a) => { const s = a.slice().sort((p, q) => p - q); return s[s.length >> 1]; }, tops = [], bots = [];
-  for (let x = x0; x <= x1; x++) {   // filtre médian : ignore les fines lignes verticales des légendes
-    const ts = [], bs = []; for (let j = x - 4; j <= x + 4; j++) if (j >= 0 && j < W && v(j)) { ts.push(top[j]); bs.push(bot[j]); }
+  for (let x = x0; x <= x1; x++) {   // filtre médian étroit (3 colonnes) pour conserver les pics fins
+    const ts = [], bs = []; for (let j = x - win; j <= x + win; j++) if (j >= 0 && j < W && v(j)) { ts.push(top[j]); bs.push(bot[j]); }
     tops.push(med(ts)); bots.push(med(bs));
   }
-  const base = med(bots), g0 = tops.map((t, i) => (kind(x0 + i, Math.min(base - 2, t + 5)) === 2 ? 1 : 0));
+  const base = med(bots), n = tops.length, kmOf = (i) => (i / (n - 1)) * dist;
+  const g0 = warm ? tops.map(() => 0) : tops.map((t, i) => (kind(x0 + i, Math.min(base - 2, t + 5)) === 2 ? 1 : 0));
   const gr = g0.map((_, i) => { let s = 0; for (let j = i - 2; j <= i + 2; j++) s += g0[j] || 0; return s >= 3 ? 1 : 0; });
-  const n = tops.length, N = Math.min(480, n - 1), hs = tops.map((t) => base - t), hmin = Math.min(...hs), span = Math.max(1, Math.max(...hs) - hmin), points = [];
-  for (let s = 0; s <= N; s++) points.push([+((s / N) * dist).toFixed(2), Math.round(altMin + ((hs[Math.round((s / N) * (n - 1))] - hmin) / span) * (altMax - altMin))]);
-  const kmOf = (i) => (i / (n - 1)) * dist, cobbles = []; let st = -1;
+  const N = Math.min(480, n - 1), hs = tops.map((t) => base - t), hmin = Math.min(...hs), span = Math.max(1, Math.max(...hs) - hmin), points = [];
+  for (let s = 0; s <= N; s++) {   // maximum de chaque tranche : aucun pic n'est perdu
+    const a = Math.max(0, Math.floor(((s - 0.5) / N) * (n - 1))), b = Math.min(n - 1, Math.ceil(((s + 0.5) / N) * (n - 1)));
+    let m = -1e9; for (let i = a; i <= b; i++) if (hs[i] > m) m = hs[i];
+    points.push([+((s / N) * dist).toFixed(2), Math.round(altMin + ((m - hmin) / span) * (altMax - altMin))]);
+  }
+  const cobbles = []; let st = -1;
   for (let i = 0; i <= n; i++) {
     if (gr[i]) { if (st < 0) st = i; continue; }
     if (st >= 0) { const f = kmOf(st), t = kmOf(i), last = cobbles[cobbles.length - 1]; if (last && f - last.to < 0.5) last.to = +t.toFixed(1); else cobbles.push({ from: +f.toFixed(1), to: +t.toFixed(1) }); st = -1; }
   }
-  return { km: dist, altMin, altMax, points, cobbles: cobbles.filter((c) => c.to - c.from >= 0.2) };
+  const marks = [];   // barres roses sous le profil = emplacement des cols
+  if (warm) {
+    let yb = -1; for (let y = Hh - 1; y >= 0 && yb < 0; y--) { let c = 0; for (let x = x0; x <= x1; x++) if (isP(px[(y * W + x) * 4], px[(y * W + x) * 4 + 1], px[(y * W + x) * 4 + 2])) c++; if (c >= 6) yb = y; }
+    if (yb >= 0) {
+      const col = []; for (let x = x0; x <= x1; x++) col.push([yb - 1, yb, yb + 1].some((y) => y >= 0 && y < Hh && isP(px[(y * W + x) * 4], px[(y * W + x) * 4 + 1], px[(y * W + x) * 4 + 2])) ? 1 : 0);
+      let s = -1, gap = 0;
+      for (let i = 0; i <= col.length; i++) {
+        if (col[i]) { if (s < 0) s = i; gap = 0; continue; }
+        if (s >= 0 && ++gap > 2) { const e = i - gap; if (e - s >= 2) marks.push({ from: +kmOf(s).toFixed(1), to: +kmOf(e + 1).toFixed(1) }); s = -1; gap = 0; }
+      }
+    }
+  }
+  return { km: dist, altMin, altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks };
 }
 
 // Construit le profil complet (cols, sprints, pavés, vent) à partir des points enregistrés
 function simProfileFromData(race) {
   const D = race.profile_data, dist = Number(race.distance_km) || D.km, pts = D.points, type = race.profile_type || D.type || 'FLAT', n = pts.length;
   const rng = simRng(String(race.id || race.name || 'etape') + type), R = (a, b) => a + rng() * (b - a), I = (a, b) => Math.floor(R(a, b + 1)), clamp = (v, a, b) => Math.max(a, Math.min(b, v)), ov = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
-  const sm = pts.map((p, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) { s += pts[j][1]; c++; } return s / c; });
-  const T = 30, ex = []; let mx = 0, mn = 0, up = null;
-  for (let i = 1; i < n; i++) {   // sommets et fonds de vallée (seuil 30 m)
-    const y = sm[i]; if (y > sm[mx]) mx = i; if (y < sm[mn]) mn = i;
-    if (up !== false && sm[mx] - y >= T) { ex.push({ i: mx, t: 'max' }); up = false; mx = mn = i; }
-    else if (up !== true && y - sm[mn] >= T) { ex.push({ i: mn, t: 'min' }); up = true; mx = mn = i; }
+  const sm = pts.map((p, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) { s += pts[j][1]; c++; } return s / c; });
+  const rangeA = Math.max(20, (D.altMax ?? 150) - (D.altMin ?? 0)), T = Math.max(8, rangeA * 0.035), climbs = [];
+  if (D.marks?.length) {   // cols = barres roses de l'image : sommet = point le plus haut de la barre
+    D.marks.forEach((m) => {
+      let a = -1, b = -1; pts.forEach((p, i) => { if (p[0] >= m.from - 0.2 && p[0] <= m.to + 0.2) { if (a < 0) a = i; b = i; } });
+      if (a < 0) return;
+      let s = a; for (let i = a; i <= b; i++) if (sm[i] > sm[s]) s = i;
+      let vv = a; for (let i = a; i <= s; i++) if (sm[i] < sm[vv]) vv = i;
+      const start = pts[vv][0], km = pts[s][0], len = Math.max(0.3, km - start), gain = Math.round(sm[s] - sm[vv]);
+      if (gain < T * 0.6) return;
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.min(4, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
+    });
+  } else {                 // sans barres roses : sommets détectés sur la courbe
+    const ex = []; let mx = 0, mn = 0, up = null;
+    for (let i = 1; i < n; i++) {
+      const y = sm[i]; if (y > sm[mx]) mx = i; if (y < sm[mn]) mn = i;
+      if (up !== false && sm[mx] - y >= T) { ex.push({ i: mx, t: 'max' }); up = false; mx = mn = i; }
+      else if (up !== true && y - sm[mn] >= T) { ex.push({ i: mn, t: 'min' }); up = true; mx = mn = i; }
+    }
+    if (up === true && sm[mx] - sm[mn] >= T) ex.push({ i: mx, t: 'max' });
+    ex.forEach((e, k) => {
+      if (e.t !== 'max') return;
+      const pv = ex.slice(0, k).reverse().find((x) => x.t === 'min'), nx = ex.slice(k + 1).find((x) => x.t === 'min'), vv = pv ? pv.i : 0;
+      const start = pts[vv][0], km = pts[e.i][0], len = km - start, gain = Math.round(sm[e.i] - sm[vv]);
+      if (gain < T * 1.2 || len < 0.4) return;
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : nx ? pts[nx.i][0] - km : Math.min(3, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
+    });
   }
-  if (up === true && sm[mx] - sm[mn] >= T) ex.push({ i: mx, t: 'max' });
-  const climbs = [];
-  ex.forEach((e, k) => {
-    if (e.t !== 'max') return;
-    const pv = ex.slice(0, k).reverse().find((x) => x.t === 'min'), nx = ex.slice(k + 1).find((x) => x.t === 'min'), v = pv ? pv.i : 0;
-    const start = pts[v][0], km = pts[e.i][0], len = km - start, gain = Math.round(sm[e.i] - sm[v]);
-    if (gain < 40 || len < 0.4) return;
-    climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : nx ? pts[nx.i][0] - km : Math.min(3, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
-  });
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
   const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;

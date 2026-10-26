@@ -1,6 +1,6 @@
 // sim.js — Simulation 2D de course en direct : profil altimétrique (génération + rendu SVG)
 // Utilise esc, $, sb, state, PROFILES (app.js) et selHtml (recruit.js)
-const simCat = (gain) => (gain >= 900 ? 'HC' : gain >= 600 ? '1' : gain >= 350 ? '2' : gain >= 160 ? '3' : '4');
+const simCat = (gain, len) => { const g = len ? gain / (len * 10) : 6, e = gain * Math.min(1, g / 5); return e >= 850 ? 'HC' : e >= 550 ? '1' : e >= 300 ? '2' : e >= 150 ? '3' : '4'; };   // pente < 5 % : catégorie réduite
 function simRng(seed) {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) { h = Math.imul(h ^ seed.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
@@ -246,12 +246,12 @@ function simProfileFromData(race) {
   if (D.icons?.some((i) => i.kind === 'climb')) {   // cols = icônes de catégorie lues sur l'image
     D.icons.filter((i) => i.kind === 'climb').forEach((ic) => {
       let s = 0, best = -1e9; pts.forEach((p, i) => { if (Math.abs(p[0] - ic.km) <= 1.5 && sm[i] > best) { best = sm[i]; s = i; } });
-      let vv = s; for (let i = s - 1; i >= 0 && pts[s][0] - pts[i][0] <= 40; i--) { if (sm[i] < sm[vv]) vv = i; else if (sm[i] - sm[vv] > T) break; }
+      let vv = s; for (let i = s - 1; i >= 0 && pts[s][0] - pts[i][0] <= 25; i--) { if (sm[i] < sm[vv]) vv = i; else if (sm[i] - sm[vv] > T) break; }
       let nn = s; for (let i = s + 1; i < n; i++) { if (sm[i] < sm[nn]) nn = i; else if (sm[i] - sm[nn] > T) break; }
       const start = pts[vv][0], km = pts[s][0], gain = Math.max(10, Math.round(sm[s] - sm[vv])), len = Math.max(0.5, km - start);
-      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.max(2, pts[nn][0] - km), cat: ic.cat || simCat(gain), name: ic.name || '', top: km >= dist - 0.5 });
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.max(2, pts[nn][0] - km), cat: ic.cat || simCat(gain, len), name: ic.name || '', top: km >= dist - 0.5 });
     });
-  } else if (D.marks?.length) {
+  } else {
     const ex = []; let mx = 0, mn = 0, up = null;
     for (let i = 1; i < n; i++) {
       const y = sm[i]; if (y > sm[mx]) mx = i; if (y < sm[mn]) mn = i;
@@ -263,8 +263,8 @@ function simProfileFromData(race) {
       if (e.t !== 'max') return;
       const pv = ex.slice(0, k).reverse().find((x) => x.t === 'min'), nx = ex.slice(k + 1).find((x) => x.t === 'min'), vv = pv ? pv.i : 0;
       const start = pts[vv][0], km = pts[e.i][0], len = km - start, gain = Math.round(sm[e.i] - sm[vv]);
-      if (gain < T * 1.2 || len < 0.4) return;
-      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : nx ? pts[nx.i][0] - km : Math.min(3, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
+      if (gain < 80 || len < 1 || gain / (len * 10) < 3) return;
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : nx ? pts[nx.i][0] - km : Math.min(3, dist - km), cat: simCat(gain, len), top: km >= dist - 0.5 });
     });
   }
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
@@ -416,4 +416,34 @@ async function simReadProfileText(img, g, onProgress) {
     return { f: Math.max(0, Math.min(1, (ic.cx - x0) / (x1 - x0))), kind, cat: kind === 'climb' ? (hc ? 'HC' : digit ? digit[0] : null) : null, name: clean(mine.map((l) => l.ws.sort((a, b) => a.cx - b.cx).map((w) => w.t).join(' ')).join(' ')) };
   }).sort((a, b) => a.f - b.f);
   return { name, dist, cal, icons: out };
+}
+/* ===== Éditeur de cols / sprints et contrôle des altitudes ===== */
+function siMaxGrade(P) {
+  const pts = P.points; let mg = 0;
+  for (let i = 0; i < pts.length; i++) { const j = pts.findIndex((p) => p[0] >= pts[i][0] + 2); if (j < 0) break; mg = Math.max(mg, (pts[j][1] - pts[i][1]) / ((pts[j][0] - pts[i][0]) * 10)); }
+  return mg;
+}
+function siEditorHTML(P) {
+  const cats = ['4', '3', '2', '1', 'HC'], mg = siMaxGrade(P);
+  const row = (kind, km, cat, name, info) => `<tr data-sir="${kind}"><td>${kind === 'climb' ? 'Col' : 'Sprint'}</td><td><input data-sie="km" type="number" step="0.1" value="${(+km).toFixed(1)}" style="width:80px"></td>
+    <td>${kind === 'climb' ? `<select data-sie="cat">${cats.map((c) => `<option ${c === String(cat) ? 'selected' : ''}>${c}</option>`).join('')}</select>` : '-'}</td>
+    <td><input data-sie="name" value="${esc(name || '')}" style="width:170px"></td><td class="muted">${info || ''}</td><td><input data-sie="del" type="checkbox"></td></tr>`;
+  return `<div class="panel" style="margin-top:.7rem"><h4>Vérification des cols et des altitudes</h4>
+    <div class="stat-row"><span>Pente maximale sur 2 km</span><b class="${mg > 14 ? 'down' : 'up'}">${mg.toFixed(1)} %</b></div>
+    ${mg > 14 ? `<p class="down" style="font-size:.85rem">Pentes irréalistes : l'altitude maximale est trop élevée et fausserait la simulation.</p><button type="button" data-sie="fit">Ajuster l'altitude max automatiquement</button>` : '<p class="muted" style="font-size:.85rem">Altitudes cohérentes. Corrigez ci-dessous toute catégorie ou position erronée.</p>'}
+    <div class="tbl"><table class="fm sq"><thead><tr><th>Type</th><th>Km</th><th>Catégorie</th><th>Nom</th><th>Dénivelé / pente</th><th>Suppr.</th></tr></thead><tbody>
+    ${P.climbs.map((c) => row('climb', c.km, c.cat, c.name, `+${c.gain} m · ${c.grad} %`)).join('')}${P.sprints.map((s) => row('sprint', s.km, '', '', '')).join('')}</tbody></table></div>
+    <div class="rov-btns"><button type="button" data-sie="addc">Ajouter un col</button><button type="button" data-sie="adds">Ajouter un sprint</button></div></div>`;
+}
+function siBindEditor(P, km, rebuild, getInfo, setIcons) {
+  const box = $('si-prev'), read = () => [...box.querySelectorAll('tr[data-sir]')].filter((r) => !r.querySelector('[data-sie="del"]').checked).map((r) => {
+    const q = (k) => r.querySelector(`[data-sie="${k}"]`);
+    return { kind: r.dataset.sir, f: Math.max(0, Math.min(1, +q('km').value / km)), cat: r.dataset.sir === 'climb' ? q('cat').value : null, name: q('name').value };
+  });
+  box.querySelectorAll('input[data-sie], select[data-sie]').forEach((el) => (el.onchange = () => { setIcons(read()); rebuild(); }));
+  box.querySelectorAll('button[data-sie]').forEach((b) => (b.onclick = () => {
+    const a = b.dataset.sie;
+    if (a === 'fit') { const amin = +$('si-amin').value, amax = +$('si-amax').value, mg = siMaxGrade(P); $('si-amax').value = Math.round(amin + ((amax - amin) * 11) / mg); const i = getInfo(); if (i) i.cal = null; setIcons(read()); rebuild(); }
+    else { setIcons([...read(), a === 'addc' ? { kind: 'climb', f: 0.5, cat: '3', name: '' } : { kind: 'sprint', f: 0.5, cat: null, name: '' }]); rebuild(); }
+  }));
 }

@@ -107,7 +107,7 @@ function renderRaceProfileSVG(P, currentKm = 0, groups = [], view = { zoom: 1, c
   const wind = P.wind.map((w) => band(w.from, w.to, '#38bdf8', 0.3) + (w.to >= v0 && w.from <= v1 ? `<g><title>Vent de côté (${w.dir === 'L' ? 'gauche' : 'droite'}) : risque de bordures</title><use href="#simWind" x="${X((Math.max(w.from, v0) + Math.min(w.to, v1)) / 2) - 9}" y="${mt + 2}" width="18" height="18"/></g>` : '')).join('');
   const bars = P.climbs.map((c) => bar(c.start, c.km, '#f43f5e')).join('') + P.cobbles.map((c) => bar(c.from, c.to, '#b45309')).join('');
   const labels = P.cobbles.filter((c) => c.to >= v0 && c.from <= v1 && X(Math.min(c.to, v1)) - X(Math.max(c.from, v0)) > 14).map((c) => `<text x="${X((Math.max(c.from, v0) + Math.min(c.to, v1)) / 2)}" y="${base + 19}" text-anchor="middle" font-size="8" fill="#f59e0b">${'★'.repeat(c.stars)}</text>`).join('');
-  const pins = P.climbs.map((c) => pin(c.km, c.cat, c.cat === 'HC' ? '#7f1d1d' : '#db2777', c.cat === 'HC' ? 11 : 9, `Col de catégorie ${c.cat} : ${c.len.toFixed(1)} km à ${c.grad} % (+${c.gain} m) · km ${c.km.toFixed(0)}`)).join('')
+  const pins = P.climbs.map((c) => pin(c.km, c.cat, c.cat === 'HC' ? '#7f1d1d' : '#db2777', c.cat === 'HC' ? 11 : 9, `${c.name ? c.name + ' · ' : ''}Col de catégorie ${c.cat} : ${c.len.toFixed(1)} km à ${c.grad} % (+${c.gain} m) · km ${c.km.toFixed(0)}`)).join('')
     + P.sprints.map((s, i) => pin(s.km, 'S', '#10b981', 9, `Sprint intermédiaire n°${i + 1} · km ${s.km}`)).join('');
   const marks = groups.filter((g) => g.km >= v0 - 1 && g.km <= v1 + 1).map((g) => {
     const [nm, col] = SIM_GROUP[g.type] || ['Groupe', '#e5e7eb'], x = X(g.km), y = Y(profileAlt(P, g.km)), ly = Math.max(14, y - 20), label = `${g.name || nm} · ${g.riders ?? '?'}`;
@@ -179,7 +179,7 @@ async function renderRaceLive(c) {
 }
 /* ===== Étape générée depuis une image de profil ===== */
 // Analyse l'image : courbe d'altitude (zone verte ou grise), secteurs pavés (zones grises)
-function simAnalyzeProfileImage(img, dist, altMin, altMax) {
+function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
   const W = Math.min(1600, img.naturalWidth), Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas');
   cv.width = W; cv.height = Hh; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
   const px = cx.getImageData(0, 0, W, Hh).data;
@@ -214,7 +214,7 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax) {
   for (let s = 0; s <= N; s++) {   // maximum de chaque tranche : aucun pic n'est perdu
     const a = Math.max(0, Math.floor(((s - 0.5) / N) * (n - 1))), b = Math.min(n - 1, Math.ceil(((s + 0.5) / N) * (n - 1)));
     let m = -1e9; for (let i = a; i <= b; i++) if (hs[i] > m) m = hs[i];
-    points.push([+((s / N) * dist).toFixed(2), Math.round(altMin + ((m - hmin) / span) * (altMax - altMin))]);
+    const cal = extra.cal; points.push([+((s / N) * dist).toFixed(2), cal ? Math.max(0, Math.round(cal.a * (base - m) + cal.b)) : Math.round(altMin + ((m - hmin) / span) * (altMax - altMin))]);
   }
   const cobbles = []; let st = -1;
   for (let i = 0; i <= n; i++) {
@@ -233,7 +233,8 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax) {
       }
     }
   }
-  return { km: dist, altMin, altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks };
+  const pa = points.map((p) => p[1]), icons = (extra.icons || []).map((i) => ({ ...i, km: +(i.f * dist).toFixed(1) }));
+  return { km: dist, altMin: extra.cal ? Math.min(...pa) : altMin, altMax: extra.cal ? Math.max(...pa) : altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks, icons, geo: { W, Hh, x0, x1, base, tops } };
 }
 
 // Construit le profil complet (cols, sprints, pavés, vent) à partir des points enregistrés
@@ -242,17 +243,15 @@ function simProfileFromData(race) {
   const rng = simRng(String(race.id || race.name || 'etape') + type), R = (a, b) => a + rng() * (b - a), I = (a, b) => Math.floor(R(a, b + 1)), clamp = (v, a, b) => Math.max(a, Math.min(b, v)), ov = (a1, a2, b1, b2) => a1 < b2 && b1 < a2;
   const sm = pts.map((p, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - 1); j <= Math.min(n - 1, i + 1); j++) { s += pts[j][1]; c++; } return s / c; });
   const rangeA = Math.max(20, (D.altMax ?? 150) - (D.altMin ?? 0)), T = Math.max(8, rangeA * 0.035), climbs = [];
-  if (D.marks?.length) {   // cols = barres roses de l'image : sommet = point le plus haut de la barre
-    D.marks.forEach((m) => {
-      let a = -1, b = -1; pts.forEach((p, i) => { if (p[0] >= m.from - 0.2 && p[0] <= m.to + 0.2) { if (a < 0) a = i; b = i; } });
-      if (a < 0) return;
-      let s = a; for (let i = a; i <= b; i++) if (sm[i] > sm[s]) s = i;
-      let vv = a; for (let i = a; i <= s; i++) if (sm[i] < sm[vv]) vv = i;
-      const start = pts[vv][0], km = pts[s][0], len = Math.max(0.3, km - start), gain = Math.round(sm[s] - sm[vv]);
-      if (gain < T * 0.6) return;
-      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.min(4, dist - km), cat: simCat(gain), top: km >= dist - 0.5 });
+  if (D.icons?.some((i) => i.kind === 'climb')) {   // cols = icônes de catégorie lues sur l'image
+    D.icons.filter((i) => i.kind === 'climb').forEach((ic) => {
+      let s = 0, best = -1e9; pts.forEach((p, i) => { if (Math.abs(p[0] - ic.km) <= 1.5 && sm[i] > best) { best = sm[i]; s = i; } });
+      let vv = s; for (let i = s - 1; i >= 0 && pts[s][0] - pts[i][0] <= 40; i--) { if (sm[i] < sm[vv]) vv = i; else if (sm[i] - sm[vv] > T) break; }
+      let nn = s; for (let i = s + 1; i < n; i++) { if (sm[i] < sm[nn]) nn = i; else if (sm[i] - sm[nn] > T) break; }
+      const start = pts[vv][0], km = pts[s][0], gain = Math.max(10, Math.round(sm[s] - sm[vv])), len = Math.max(0.5, km - start);
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.max(2, pts[nn][0] - km), cat: ic.cat || simCat(gain), name: ic.name || '', top: km >= dist - 0.5 });
     });
-  } else {                 // sans barres roses : sommets détectés sur la courbe
+  } else if (D.marks?.length) {
     const ex = []; let mx = 0, mn = 0, up = null;
     for (let i = 1; i < n; i++) {
       const y = sm[i]; if (y > sm[mx]) mx = i; if (y < sm[mn]) mn = i;
@@ -271,7 +270,7 @@ function simProfileFromData(race) {
   const free = (k, wd) => !climbs.some((c) => ov(k - wd, k + wd, c.start - 1, c.km + c.dlen + 1));
   const place = (k0, wd) => { let k = clamp(k0, 15, dist - 8), t = 0; while (!free(k, wd) && t++ < 60) k += 1.5; return Math.min(k, dist - 6); };
   const ns = type === 'TIME_TRIAL' ? 0 : dist > 170 ? 2 : dist > 70 ? 1 : 0;
-  const sprints = Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
+    const sprints = D.icons?.length ? D.icons.filter((i) => i.kind === 'sprint').map((i) => ({ km: i.km })) : Array.from({ length: ns }, (_, i) => ({ km: +place(dist * (ns === 1 ? R(0.45, 0.6) : i === 0 ? R(0.28, 0.4) : R(0.6, 0.72)), 1).toFixed(1) }));
   const cobbles = (D.cobbles || []).map((c, i, a) => ({ from: c.from, to: c.to, stars: clamp(Math.round(1 + (i / a.length) * 3 + R(-0.8, 1.2)), 1, 5), n: a.length - i }));
   cobbles.slice(-2).forEach((s) => (s.stars = Math.max(s.stars, 4)));
   const wind = [], nw = type === 'FLAT' || type === 'COBBLES' ? (dist < 100 ? 1 : I(1, 3)) : 0;
@@ -295,30 +294,126 @@ async function renderStageImport(c) {
       <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div></div>
     <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG), ou cliquez pour la choisir</div><input id="si-file" type="file" accept="image/*" hidden>
     <div id="si-prev"></div><div class="err" id="si-err"></div><div class="rov-btns"><button id="si-save" disabled>Générer l'étape</button></div></div>`;
-  let img = null, P = null, D = null; const val = (id) => $(id).value;
+    let img = null, P = null, D = null, info = null; const val = (id) => $(id).value;
   const build = () => {
     if (!img) return; $('si-err').textContent = '';
     try {
-      const km = Math.max(10, Math.round(+val('si-km'))), D0 = simAnalyzeProfileImage(img, km, +val('si-amin'), +val('si-amax')), tmp = { name: val('si-name') || 'Étape', distance_km: km, profile_type: 'FLAT', profile_data: D0 };
+      const km = Math.max(10, Math.round(+val('si-km'))), { geo, ...D0 } = simAnalyzeProfileImage(img, km, +val('si-amin'), +val('si-amax'), info || {});
+      const tmp = { name: val('si-name') || 'Étape', distance_km: km, profile_type: 'FLAT', profile_data: D0 };
       let type = val('si-type');
       if (type === 'AUTO') { const asc = simProfileFromData(tmp).climbs.reduce((s, x) => s + x.gain, 0); type = D0.cobbles.length >= 3 ? 'COBBLES' : asc / km < 8 ? 'FLAT' : asc / km < 22 ? 'HILLS' : 'MOUNTAIN'; }
       D = { ...D0, type }; P = simProfileFromData({ ...tmp, profile_type: type, profile_data: D });
-      $('si-prev').innerHTML = `<div class="muted" style="margin:.6rem 0">${PROFILES[type] || type} · ${P.km} km · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div>${renderRaceProfileSVG(P, 0, [])}`;
+      if (info?.cal) { $('si-amin').value = D0.altMin; $('si-amax').value = D0.altMax; }
+      $('si-prev').innerHTML = `<div class="muted" style="margin:.6rem 0">${PROFILES[type] || type} · ${P.km} km · ${P.altMin ?? P.minAlt}-${P.maxAlt} m · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s) · ${P.cobbles.length} secteur(s) pavé(s) · ${P.wind.length} zone(s) de vent</div>
+        <div class="muted" style="font-size:.78rem;margin-bottom:.4rem">${P.climbs.map((c) => `km ${c.km.toFixed(1)} : ${esc(c.name || 'Col')} (cat. ${c.cat}, +${c.gain} m, ${c.grad} %)`).join(' · ') || 'Aucun col détecté.'}${P.sprints.length ? ' · Sprints : km ' + P.sprints.map((s) => s.km).join(', ') : ''}</div>${renderRaceProfileSVG(P, 0, [])}`;
       $('si-save').disabled = false;
     } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
   };
-  const load = (f) => { if (!f || !f.type.startsWith('image/')) return; const im = new Image(); im.onload = () => { img = im; build(); }; im.src = URL.createObjectURL(f); $('si-drop').textContent = 'Image chargée : ' + f.name + ' (glissez-en une autre pour la remplacer)'; };
+  const load = (f) => {
+    if (!f || !f.type.startsWith('image/')) return;
+    const im = new Image();
+    im.onload = async () => {
+      img = im; info = null; $('si-err').textContent = ''; $('si-drop').textContent = 'Lecture de l\'image : ' + f.name + '…';
+      try {
+        const g = simAnalyzeProfileImage(im, 100, 0, 150).geo;
+        info = await simReadProfileText(im, g, (p) => ($('si-drop').textContent = `Lecture de l'image… ${p} %`));
+        if (info.name) $('si-name').value = info.name;
+        if (info.dist) $('si-km').value = info.dist;
+      } catch (e) { $('si-err').textContent = 'Lecture automatique impossible (' + e.message + ') : saisie manuelle.'; }
+      $('si-drop').textContent = 'Image chargée : ' + f.name + ' (glissez-en une autre pour la remplacer)'; build();
+    };
+    im.src = URL.createObjectURL(f);
+  };
   const dz = $('si-drop');
   dz.onclick = () => $('si-file').click(); $('si-file').onchange = (e) => load(e.target.files[0]);
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('on'); }; dz.ondragleave = () => dz.classList.remove('on');
   dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove('on'); load(e.dataTransfer.files[0]); };
-  ['si-km', 'si-amin', 'si-amax', 'si-type', 'si-name'].forEach((id) => ($(id).oninput = build));
+  ['si-km', 'si-type', 'si-name'].forEach((id) => ($(id).oninput = build));
+  ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { if (info) info.cal = null; build(); }));
   $('si-save').onclick = async () => {
     const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
-    if (!name || !date || !P) return (err.textContent = "Nom, date et image du profil sont obligatoires.");
+    if (!name || !date || !P) return (err.textContent = 'Nom, date et image du profil sont obligatoires.');
     $('si-save').disabled = true;
     const { error } = await sb.from('races').insert({ name, date, status: 'SCHEDULED', profile_type: P.type, distance_km: P.km, elevation_m: Math.round(P.climbs.reduce((s, x) => s + x.gain, 0)), category: val('si-cat'), travel_km: +val('si-travel') || 0, profile_data: D });
     if (error) { $('si-save').disabled = false; return (err.textContent = error.message); }
     toast(`Étape « ${name} » créée le ${fmtShort(date)}.`); await loadGame();
   };
+}
+/* ===== Lecture automatique de l'image : texte (OCR), échelle d'altitude, icônes de cols et de sprints ===== */
+function simPixelsOf(img, W) {
+  const Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas'); cv.width = W; cv.height = Hh;
+  const cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
+  return { W, Hh, px: cx.getImageData(0, 0, W, Hh).data };
+}
+// Carrés bleu marine (icônes de col et de sprint) : composantes connexes de pixels bleu marine
+function simFindIcons(img, g) {
+  const { W, Hh, px } = simPixelsOf(img, g.W), isN = (p) => { const i = p * 4; return px[i + 2] - px[i] > 18 && px[i + 2] > 45 && px[i + 2] < 160 && px[i] < 85 && px[i + 1] < 105 && px[i + 1] < px[i + 2]; };
+  const y0 = Math.round(Hh * 0.12), y1 = Math.round(Hh * 0.82), seen = new Uint8Array(W * Hh), out = [], lo = W * 0.018, hi = W * 0.07;
+  for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x; if (seen[p] || !isN(p)) continue;
+    let a = x, b = x, c = y, d = y, n = 0; const st = [p]; seen[p] = 1;
+    while (st.length) {
+      const q = st.pop(), qx = q % W, qy = (q - qx) / W; n++; if (qx < a) a = qx; if (qx > b) b = qx; if (qy < c) c = qy; if (qy > d) d = qy;
+      for (const [nx, ny] of [[qx - 1, qy], [qx + 1, qy], [qx, qy - 1], [qx, qy + 1]]) { if (nx < 0 || nx >= W || ny < y0 || ny >= y1) continue; const nq = ny * W + nx; if (!seen[nq] && isN(nq)) { seen[nq] = 1; st.push(nq); } }
+    }
+    const w = b - a + 1, h = d - c + 1; if (w < lo || w > hi || h < lo || h > hi || n < w * h * 0.45) continue;
+    let wt = 0, wl = 0; for (let yy = c; yy <= d; yy++) for (let xx = a; xx <= b; xx++) { const i = (yy * W + xx) * 4; if (px[i] > 190 && px[i + 1] > 190 && px[i + 2] > 190) { wt++; if (xx < a + w * 0.32) wl++; } }
+    out.push({ x0: a, x1: b, y0: c, y1: d, cx: (a + b) / 2, left: wt ? wl / wt : 0 });
+  }
+  return out;
+}
+function simIconCrop(img, g, ic) {   // intérieur de l'icône en noir sur blanc, agrandi 4 fois
+  const k = img.naturalWidth / g.W, S = 4, ix = (ic.x1 - ic.x0) * 0.14, iy = (ic.y1 - ic.y0) * 0.14, sx = ic.x0 + ix, sy = ic.y0 + iy, sw = ic.x1 - ic.x0 - 2 * ix, sh = ic.y1 - ic.y0 - 2 * iy;
+  const cv = document.createElement('canvas'); cv.width = Math.round(sw * S); cv.height = Math.round(sh * S); const cx = cv.getContext('2d', { willReadFrequently: true });
+  cx.drawImage(img, sx * k, sy * k, sw * k, sh * k, 0, 0, cv.width, cv.height);
+  const d = cx.getImageData(0, 0, cv.width, cv.height); for (let i = 0; i < d.data.length; i += 4) { const v = d.data[i] > 170 && d.data[i + 1] > 170 && d.data[i + 2] > 170 ? 0 : 255; d.data[i] = d.data[i + 1] = d.data[i + 2] = v; }
+  cx.putImageData(d, 0, 0); return cv;
+}
+
+async function simReadProfileText(img, g, onProgress) {
+  if (typeof Tesseract === 'undefined') throw new Error('module OCR non chargé (balise tesseract.js absente de index.html)');
+  const { W, Hh, x0, x1, base, tops } = g, S = 2, cv = document.createElement('canvas'); cv.width = W * S; cv.height = Hh * S;
+  const c2 = cv.getContext('2d'); c2.fillStyle = '#fff'; c2.fillRect(0, 0, cv.width, cv.height); c2.drawImage(img, 0, 0, cv.width, cv.height);
+  const icons = simFindIcons(img, g), wk = await Tesseract.createWorker('eng', 1, { logger: (m) => { if (m.status === 'recognizing text' && onProgress) onProgress(Math.round(m.progress * 100)); } });
+  let words = [];
+  try {
+    await wk.setParameters({ tessedit_pageseg_mode: '11' });
+    const { data } = await wk.recognize(cv);
+    words = (data.words || []).map((w) => ({ t: String(w.text).trim(), x0: w.bbox.x0 / S, x1: w.bbox.x1 / S, y0: w.bbox.y0 / S, y1: w.bbox.y1 / S })).filter((w) => w.t).map((w) => ({ ...w, cx: (w.x0 + w.x1) / 2, cy: (w.y0 + w.y1) / 2, h: w.y1 - w.y0 }));
+    await wk.setParameters({ tessedit_pageseg_mode: '10', tessedit_char_whitelist: '1234HC' });
+    for (const ic of icons) { try { ic.txt = ((await wk.recognize(simIconCrop(img, g, ic))).data.text || '').replace(/\s/g, ''); } catch (e) { ic.txt = ''; } }
+  } finally { await wk.terminate(); }
+
+  const isNum = (t) => /^\d+([.,]\d+)?$/.test(t), num = (t) => parseFloat(t.replace(',', '.'));
+  // Distance : plus grand repère kilométrique à droite de l'axe
+  const kmW = words.filter((w) => isNum(w.t) && w.cy > base - 0.05 * Hh && w.cy < Hh * 0.96 && w.cx >= x1 - 0.08 * W && w.cx <= x1 + 0.01 * W && num(w.t) >= 10 && num(w.t) <= 400);
+  const dist = kmW.length ? Math.max(...kmW.map((w) => num(w.t))) : null;
+  // Échelle d'altitude : repères 200, 400… des axes gauche et droit (régression : altitude = a × y + b)
+  const fit = (ps) => { const n = ps.length, sy = ps.reduce((s, p) => s + p[0], 0), sv = ps.reduce((s, p) => s + p[1], 0), syy = ps.reduce((s, p) => s + p[0] * p[0], 0), syv = ps.reduce((s, p) => s + p[0] * p[1], 0), d = n * syy - sy * sy; if (!d) return null; const a = (n * syv - sy * sv) / d; return { a, b: (sv - a * sy) / n }; };
+  const err = (f, p) => Math.abs(f.a * p[0] + f.b - p[1]);
+  let ps = words.filter((w) => /^\d{3,4}$/.test(w.t) && +w.t % 50 === 0 && +w.t >= 50 && (w.x1 < x0 - 0.002 * W || w.x0 > x1 + 0.002 * W) && w.cy > 0.15 * Hh && w.cy < 0.95 * Hh).map((w) => [w.cy, +w.t]);
+  let cal = ps.length >= 3 ? fit(ps) : null;
+  if (cal && ps.length > 3 && Math.max(...ps.map((p) => err(cal, p))) > 60) { const worst = ps.reduce((m, p) => (err(cal, p) > err(cal, m) ? p : m)); ps = ps.filter((p) => p !== worst); cal = fit(ps); }
+  if (cal && (cal.a >= 0 || Math.max(...ps.map((p) => err(cal, p))) > 80)) cal = null;
+  // Secours : altitudes de départ et d'arrivée écrites sous le titre
+  if (!cal) {
+    const nt = words.filter((w) => w.cy < 0.12 * Hh && /^\d{2,4}$/.test(w.t)).sort((a, b) => a.cx - b.cx), s = nt[0], e = nt[nt.length - 1];
+    if (s && e && s !== e) { const ys = tops[Math.min(2, tops.length - 1)], ye = tops[Math.max(0, tops.length - 3)], a = (+e.t - +s.t) / (ye - ys); if (Math.abs(ye - ys) > 15 && a < 0) cal = { a, b: +s.t - a * ys }; }
+  }
+  // Nom : « départ > arrivée », grands caractères du titre
+  const T = words.filter((w) => w.cy < 0.115 * Hh && w.h >= 0.03 * Hh && /[A-Za-zÀ-ÿ]{2,}/.test(w.t) && w.cx > 0.03 * W && w.cx < 0.935 * W), join = (a) => a.sort((p, q) => p.cx - q.cx).map((w) => w.t).join(' ');
+  const ns = join(T.filter((w) => w.cx < W / 2)), ne = join(T.filter((w) => w.cx >= W / 2)), name = ns && ne ? `${ns} > ${ne}` : ns || ne || '';
+  // Libellés : lignes de texte rattachées à l'icône la plus proche
+  const lines = [];
+  words.filter((w) => w.cy > 0.12 * Hh && w.cy < 0.78 * Hh).sort((a, b) => a.cy - b.cy).forEach((w) => {
+    const L = lines.find((l) => Math.abs(l.cy - w.cy) < 0.012 * Hh && w.x0 <= l.x1 + 0.02 * W && w.x1 >= l.x0 - 0.02 * W);
+    if (L) { L.ws.push(w); L.x0 = Math.min(L.x0, w.x0); L.x1 = Math.max(L.x1, w.x1); } else lines.push({ cy: w.cy, x0: w.x0, x1: w.x1, ws: [w] });
+  });
+  const clean = (t) => t.replace(/\([^)]*%[^)]*\)/g, '').replace(/^\s*\d+\s*m\b[\s-]*/i, '').replace(/\s*\d+([.,]\d+)?\s*km.*$/i, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+  const out = icons.filter((ic) => (ic.cx - x0) / (x1 - x0) > -0.03 && (ic.cx - x0) / (x1 - x0) < 1.03).map((ic) => {
+    const digit = (ic.txt || '').match(/[1-4]/), hc = /H|C/.test(ic.txt || ''), kind = (!digit && !hc && ic.left > 0.2) || ic.left > 0.4 ? 'sprint' : 'climb';
+    const mine = lines.filter((l) => { const m = (l.x0 + l.x1) / 2; return l.cy < ic.y0 && l.cy > ic.y0 - 0.2 * Hh && Math.abs(m - ic.cx) < 0.07 * W && icons.reduce((b, o) => (Math.abs(o.cx - m) < Math.abs(b.cx - m) ? o : b), icons[0]) === ic; }).sort((a, b) => a.cy - b.cy);
+    return { f: Math.max(0, Math.min(1, (ic.cx - x0) / (x1 - x0))), kind, cat: kind === 'climb' ? (hc ? 'HC' : digit ? digit[0] : null) : null, name: clean(mine.map((l) => l.ws.sort((a, b) => a.cx - b.cx).map((w) => w.t).join(' ')).join(' ')) };
+  }).sort((a, b) => a.f - b.f);
+  return { name, dist, cal, icons: out };
 }

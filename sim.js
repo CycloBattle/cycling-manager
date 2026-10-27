@@ -1,6 +1,11 @@
 // sim.js — Simulation 2D de course en direct : profil altimétrique (génération + rendu SVG)
 // Utilise esc, $, sb, state, PROFILES (app.js) et selHtml (recruit.js)
-const simCat = (gain, len) => { const g = len ? gain / (len * 10) : 6, e = gain * Math.min(1, g / 5); return e >= 850 ? 'HC' : e >= 550 ? '1' : e >= 300 ? '2' : e >= 150 ? '3' : '4'; };   // pente < 5 % : catégorie réduite
+const simCat = (gain, len) => {   // difficulté = longueur × pente² (calibrée sur les catégories ProCyclingStats)
+  if (!len) return gain >= 900 ? 'HC' : gain >= 600 ? '1' : gain >= 350 ? '2' : gain >= 160 ? '3' : '4';
+  if (gain < 80) return '4';
+  const g = gain / (len * 10), d = len * g * g;
+  return d >= 900 ? 'HC' : d >= 450 ? '1' : d >= 140 ? '2' : d >= 60 ? '3' : '4';
+};
 function simRng(seed) {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) { h = Math.imul(h ^ seed.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
@@ -24,7 +29,7 @@ function generateRaceProfile(race) {
     TIME_TRIAL: { base: [10, 80], n: [0, 1], elev: 150, max: 120, gr: [3, 5], amp: 6 } };
   const cfg = CFG[type] || CFG.FLAT, elev = Number(race.elevation_m) || cfg.elev, n = Math.min(I(cfg.n[0], cfg.n[1]), Math.ceil(dist / 25));
 
-  // Cols : un par tranche de parcours, durée = dénivelé / pente moyenne, catégorie selon le dénivelé
+  // Cols : un par tranche de parcours, durée = dénivelé / pente moyenne, catégorie selon la longueur et la pente
   const w = Array.from({ length: n }, () => R(0.6, 1.4)), ws = w.reduce((a, b) => a + b, 0) || 1;
   const lo = Math.min(10, dist * 0.08), hi = dist - Math.min(5, dist * 0.04), slot = (hi - lo) / Math.max(1, n), climbs = [];
   for (let i = 0; i < n; i++) {
@@ -179,37 +184,42 @@ async function renderRaceLive(c) {
 }
 
 /* ===== Étape générée depuis une image de profil ===== */
-// Analyse l'image : courbe d'altitude (zone verte ou grise), secteurs pavés (zones grises)
+// Analyse l'image : courbe d'altitude (relief vert foncé, jaune-orange ou gris), secteurs pavés (zones grises)
 function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
   const W = Math.min(1600, img.naturalWidth), Hh = Math.round((img.naturalHeight * W) / img.naturalWidth), cv = document.createElement('canvas');
   cv.width = W; cv.height = Hh; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.fillStyle = '#fff'; cx.fillRect(0, 0, W, Hh); cx.drawImage(img, 0, 0, W, Hh);
   const px = cx.getImageData(0, 0, W, Hh).data;
   const isG = (r, g, b) => g > 110 && g > r + 8 && g > b + 35, isW = (r, g, b) => r > 45 && r - b > 22 && g >= b && r >= g - 10, isP = (r, g, b) => r > 170 && b > g + 25 && g < 120;
   let ng = 0, nw = 0; for (let i = 0; i < px.length; i += 16) { if (isG(px[i], px[i + 1], px[i + 2])) ng++; else if (isW(px[i], px[i + 1], px[i + 2])) nw++; }
-  const warm = nw > ng;                                                                            // profil jaune-orange sur fond sombre, sinon terrain vert / pavés gris
+  const warm = nw > ng;                                                                            // relief jaune-orange sur fond sombre, sinon relief vert
+  let dom = null;                                                                                  // vert dominant = vert foncé du corps du relief (le vert clair du bord 3D est ignoré)
+  if (!warm) { const hist = {}; let dc = 0; for (let i = 0; i < px.length; i += 16) { const r = px[i], g = px[i + 1], b = px[i + 2]; if (!isG(r, g, b)) continue; const k = (r >> 4) * 10000 + (g >> 4) * 100 + (b >> 4), c = (hist[k] = (hist[k] || 0) + 1); if (c > dc) { dc = c; dom = [r, g, b]; } } }
+  const near = (r, g, b) => { const a = r - dom[0], c = g - dom[1], d = b - dom[2]; return a * a + c * c + d * d < 1700; };
   const kind = (x, y) => { const i = (y * W + x) * 4, r = px[i], g = px[i + 1], b = px[i + 2];
     if (warm) return isW(r, g, b) ? 1 : 0;
-    if (isG(r, g, b)) return 1;
-    if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r >= 95 && r <= 205) return 2;
+    if (dom ? near(r, g, b) : isG(r, g, b)) return 1;
+    if (Math.abs(r - g) < 14 && Math.abs(g - b) < 14 && r >= 95 && r <= 205) return 2;           // secteur pavé (gris)
     return 0; };
-  const K = warm ? 2 : 8, minT = warm ? 1 : 6, win = warm ? 1 : 4, top = new Array(W).fill(-1), bot = new Array(W).fill(-1);
-  for (let x = 0; x < W; x++) for (let y = 0; y < Hh - K; y++) {
-    let ok = true; for (let k = 0; k < K; k++) if (!kind(x, y + k)) { ok = false; break; }
-    if (!ok) continue;
-    let b = y; while (b < Hh - 1 && (kind(x, b + 1) || kind(x, b + 2))) b++;
+  const sup = (x, y) => { let c = 0; for (let d = -4; d <= 4; d++) { const xx = x + d; if (xx >= 0 && xx < W && kind(xx, y)) c++; } return c >= 6; };   // élargeur ≥ 6 px : ignore traits fins et textes
+  const ok = warm ? kind : sup, K = warm ? 2 : 8, minT = warm ? 1 : 6, win = 1, y0 = warm ? 0 : Math.round(Hh * 0.12), top = new Array(W).fill(-1), bot = new Array(W).fill(-1);
+  for (let x = 0; x < W; x++) for (let y = y0; y < Hh - K; y++) {
+    let good = true; for (let k = 0; k < K; k++) if (!ok(x, y + k)) { good = false; break; }
+    if (!good) continue;
+    let b = y; while (b < Hh - 1 && (ok(x, b + 1) || ok(x, b + 2))) b++;
     top[x] = y; bot[x] = b; break;
   }
   const v = (x) => top[x] >= 0 && bot[x] - top[x] >= minT; let x0 = -1, x1 = -1;
-  for (let x = 0; x < W - 10 && x0 < 0; x++) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x + k)) { ok = false; break; } if (ok) x0 = x; }
-  for (let x = W - 1; x >= 10 && x1 < 0; x--) { let ok = true; for (let k = 0; k < 10; k++) if (!v(x - k)) { ok = false; break; } if (ok) x1 = x; }
+  for (let x = 0; x < W - 10 && x0 < 0; x++) { let good = true; for (let k = 0; k < 10; k++) if (!v(x + k)) { good = false; break; } if (good) x0 = x; }
+  for (let x = W - 1; x >= 10 && x1 < 0; x--) { let good = true; for (let k = 0; k < 10; k++) if (!v(x - k)) { good = false; break; } if (good) x1 = x; }
   if (x0 < 0 || x1 <= x0 + 20) throw new Error('Profil non détecté : utilisez une image avec un relief jaune-orange, vert ou gris bien visible.');
-  const med = (a) => { const s = a.slice().sort((p, q) => p - q); return s[s.length >> 1]; }, tops = [], bots = [];
-  for (let x = x0; x <= x1; x++) {   // filtre médian étroit (3 colonnes) pour conserver les pics fins
-    const ts = [], bs = []; for (let j = x - win; j <= x + win; j++) if (j >= 0 && j < W && v(j)) { ts.push(top[j]); bs.push(bot[j]); }
-    tops.push(med(ts)); bots.push(med(bs));
-  }
+  const med = (a) => { const s = a.slice().sort((p, q) => p - q); return s[s.length >> 1]; };
+  const rt = [], rb = []; for (let x = x0; x <= x1; x++) { rt.push(v(x) ? top[x] : null); rb.push(v(x) ? bot[x] : null); }
+  const fill = (a) => { let last = -1; for (let i = 0; i < a.length; i++) { if (a[i] == null) continue; if (last >= 0 && i - last > 1) for (let j = last + 1; j < i; j++) a[j] = a[last] + ((a[i] - a[last]) * (j - last)) / (i - last); last = i; } };
+  fill(rt); fill(rb);   // colonnes coupées par un trait de repère : reconstituées entre leurs voisines
+  const tops = [], bots = [];
+  for (let i = 0; i < rt.length; i++) { const a = Math.max(0, i - win), b = Math.min(rt.length, i + win + 1); tops.push(med(rt.slice(a, b))); bots.push(med(rb.slice(a, b))); }
   const base = med(bots), n = tops.length, kmOf = (i) => (i / (n - 1)) * dist;
-  const g0 = warm ? tops.map(() => 0) : tops.map((t, i) => (kind(x0 + i, Math.min(base - 2, t + 5)) === 2 ? 1 : 0));
+  const g0 = warm ? tops.map(() => 0) : tops.map((t, i) => (kind(x0 + i, Math.min(base - 2, Math.round(t) + 5)) === 2 ? 1 : 0));
   const gr = g0.map((_, i) => { let s = 0; for (let j = i - 2; j <= i + 2; j++) s += g0[j] || 0; return s >= 3 ? 1 : 0; });
   const N = Math.min(480, n - 1), hs = tops.map((t) => base - t), hmin = Math.min(...hs), span = Math.max(1, Math.max(...hs) - hmin), points = [];
   for (let s = 0; s <= N; s++) {   // maximum de chaque tranche : aucun pic n'est perdu
@@ -234,8 +244,12 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
       }
     }
   }
-  const anc = extra.anchors || [];
-  if (anc.length) {   // points d'altitude placés à la main : correction interpolée entre les ancres (la forme du profil est conservée)
+  let anc = extra.anchors || [];
+  if (!anc.length && extra.cal && extra.ends) {   // altitudes de départ et d'arrivée lues sous le titre : recalage automatique si l'écart est plausible
+    const e0 = extra.ends.s - points[0][1], e1 = extra.ends.e - points[points.length - 1][1];
+    if (Math.abs(e0) < 120 && Math.abs(e1) < 120) anc = [{ km: 0, alt: extra.ends.s }, { km: dist, alt: extra.ends.e }];
+  }
+  if (anc.length) {   // points d'altitude imposés : correction interpolée entre les ancres (la forme du profil est conservée)
     const A = anc.map((a) => { const i = points.reduce((b, p, k) => (Math.abs(p[0] - a.km) < Math.abs(points[b][0] - a.km) ? k : b), 0); return { km: points[i][0], off: a.alt - points[i][1] }; }).sort((p, q) => p.km - q.km);
     points.forEach((p) => {
       let o; const j = A.findIndex((a) => a.km >= p[0]);
@@ -244,7 +258,7 @@ function simAnalyzeProfileImage(img, dist, altMin, altMax, extra = {}) {
     });
   }
   const pa = points.map((p) => p[1]), icons = (extra.icons || []).map((i) => ({ ...i, km: +(i.f * dist).toFixed(1) })), fixed = extra.cal || anc.length;
-  return { km: dist, altMin: fixed ? Math.min(...pa) : altMin, altMax: fixed ? Math.max(...pa) : altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks, icons, manual: !!extra.manual, anchors: anc, geo: { W, Hh, x0, x1, base, tops } };
+  return { km: dist, altMin: fixed ? Math.min(...pa) : altMin, altMax: fixed ? Math.max(...pa) : altMax, points, cobbles: warm ? [] : cobbles.filter((c) => c.to - c.from >= 0.2), marks, icons, manual: !!extra.manual, anchors: extra.anchors || [], geo: { W, Hh, x0, x1, base, tops } };
 }
 
 // Construit le profil complet (cols, sprints, pavés, vent) à partir des points enregistrés
@@ -258,8 +272,8 @@ function simProfileFromData(race) {
       let s = 0, best = -1e9; pts.forEach((p, i) => { if (Math.abs(p[0] - ic.km) <= 1.5 && sm[i] > best) { best = sm[i]; s = i; } });
       let vv = s; for (let i = s - 1; i >= 0 && pts[s][0] - pts[i][0] <= 25; i--) { if (sm[i] < sm[vv]) vv = i; else if (sm[i] - sm[vv] > T) break; }
       let nn = s; for (let i = s + 1; i < n; i++) { if (sm[i] < sm[nn]) nn = i; else if (sm[i] - sm[nn] > T) break; }
-      const start = pts[vv][0], km = pts[s][0], gain = Math.max(10, Math.round(sm[s] - sm[vv])), len = Math.max(0.5, km - start);
-      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.max(2, pts[nn][0] - km), cat: ic.cat || simCat(gain, len), name: ic.name || '', top: km >= dist - 0.5 });
+      const L = ic.len > 0 && ic.grad > 0, km = pts[s][0], len = L ? ic.len : Math.max(0.5, km - pts[vv][0]), gain = L ? Math.round(ic.len * 10 * ic.grad) : Math.max(10, Math.round(sm[s] - sm[vv])), start = L ? Math.max(0, km - len) : pts[vv][0];
+      climbs.push({ start, km, len, gain, grad: +(gain / (len * 10)).toFixed(1), dlen: km >= dist - 0.5 ? 0 : Math.max(2, pts[nn][0] - km), cat: L ? simCat(gain, len) : ic.cat || simCat(gain, len), name: ic.name || '', top: km >= dist - 0.5 });
     });
   } else {
     const ex = []; let mx = 0, mn = 0, up = null;
@@ -428,9 +442,11 @@ async function simReadProfileText(img, g, onProgress) {
   const out = icons.filter((ic) => (ic.cx - x0) / (x1 - x0) > -0.03 && (ic.cx - x0) / (x1 - x0) < 1.03).map((ic) => {
     const digit = (ic.txt || '').match(/[1-4]/), hc = /H|C/.test(ic.txt || ''), kind = (!digit && !hc && ic.left > 0.2) || ic.left > 0.4 ? 'sprint' : 'climb';
     const mine = lines.filter((l) => { const m = (l.x0 + l.x1) / 2; return l.cy < ic.y0 && l.cy > ic.y0 - 0.2 * Hh && Math.abs(m - ic.cx) < 0.07 * W && icons.reduce((b, o) => (Math.abs(o.cx - m) < Math.abs(b.cx - m) ? o : b), icons[0]) === ic; }).sort((a, b) => a.cy - b.cy);
-    return { f: Math.max(0, Math.min(1, (ic.cx - x0) / (x1 - x0))), kind, cat: kind === 'climb' ? (hc ? 'HC' : digit ? digit[0] : null) : null, name: clean(mine.map((l) => l.ws.sort((a, b) => a.cx - b.cx).map((w) => w.t).join(' ')).join(' ')) };
+    const raw = mine.map((l) => l.ws.sort((a, b) => a.cx - b.cx).map((w) => w.t).join(' ')).join(' '), mm = raw.match(/(\d+(?:[.,]\d+)?)\s*km\s*[-–—]\s*(\d+(?:[.,]\d+)?)\s*%/i);   // « 5.2 Km - 6.7% »
+    return { f: Math.max(0, Math.min(1, (ic.cx - x0) / (x1 - x0))), kind, cat: kind === 'climb' ? (hc ? 'HC' : digit ? digit[0] : null) : null, name: clean(raw), len: mm ? parseFloat(mm[1].replace(',', '.')) : null, grad: mm ? parseFloat(mm[2].replace(',', '.')) : null };
   }).sort((a, b) => a.f - b.f);
-  return { name, dist, cal, icons: out };
+  const hd = words.filter((w) => w.cy < 0.12 * Hh && /^\d{2,4}$/.test(w.t) && w.h >= 0.02 * Hh), hl = hd.filter((w) => w.cx < W / 2).sort((a, b) => a.cx - b.cx)[0], hr = hd.filter((w) => w.cx >= W / 2).sort((a, b) => b.cx - a.cx)[0];
+  return { name, dist, cal, icons: out, ends: hl && hr ? { s: +hl.t, e: +hr.t } : null };
 }
 
 /* ===== Éditeur manuel : cols, sprints, points d'altitude ===== */

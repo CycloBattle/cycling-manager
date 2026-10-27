@@ -372,7 +372,31 @@ function simProfileFromData(race) {
   return { raceId: race.id, name: race.name || 'Étape', type, km: dist, points: pts, climbs, sprints, cobbles, wind, minAlt: Math.min(...alts), maxAlt: Math.max(...alts) };
 }
 
-// Admin : glisser une image de profil + nom + date → l'étape est créée dans le calendrier
+/* ===== Lecteur de fichiers PCM .cds (CTStageData) ===== */
+// Cherche dans le fichier les listes de paires (distance, altitude) en nombres décimaux 32 bits, et extrait les textes (nom de l'étape…)
+async function simReadCds(file) {
+  const buf = await file.arrayBuffer(), dv = new DataView(buf), u8 = new Uint8Array(buf), n = buf.byteLength, strings = [];
+  let s = '';
+  for (let i = 0; i <= n; i++) { const c = i < n ? u8[i] : 0; if (c >= 32 && c < 127) s += String.fromCharCode(c); else { if (s.trim().length >= 4) strings.push(s.trim()); s = ''; } }
+  const f = (o) => dv.getFloat32(o, true), runs = [];
+  for (const swap of [false, true]) {   // paires (distance, altitude) ou (altitude, distance)
+    let p = 0;
+    while (p + 8 <= n) {
+      let q = p, px = -Infinity; const pts = [];
+      while (q + 8 <= n) {
+        const a = f(q), b = f(q + 4), x = swap ? b : a, y = swap ? a : b;
+        if (!isFinite(x) || !isFinite(y) || Math.abs(x) > 1e6 || y < -300 || y > 6000 || x <= px) break;
+        pts.push([x, y]); px = x; q += 8;
+      }
+      const ys = pts.map((t) => t[1]);
+      if (pts.length >= 30 && Math.max(...ys) - Math.min(...ys) > 5) { runs.push({ off: p, swap, pts, x0: pts[0][0], x1: pts[pts.length - 1][0], ymin: Math.min(...ys), ymax: Math.max(...ys) }); p = q; } else p++;
+    }
+  }
+  runs.sort((a, b) => b.pts.length - a.pts.length);
+  return { strings, runs: runs.slice(0, 8) };
+}
+
+// Admin : glisser une image de profil (ou un fichier .cds) + nom + date → l'étape est créée dans le calendrier
 async function renderStageImport(c) {
   const TYPES = [['AUTO', 'Automatique'], ['FLAT', 'Plat'], ['HILLS', 'Vallonné'], ['MOUNTAIN', 'Montagne'], ['COBBLES', 'Pavés'], ['TIME_TRIAL', 'Contre-la-montre']], CATS = ['1.1', '1.Pro', '1.UWT', '2.1', '2.Pro', '2.UWT'].map((x) => [x, x]);
   c.innerHTML = `<div class="panel"><h4>Admin : importer le profil d'une étape</h4><div class="adm-grid">
@@ -381,11 +405,12 @@ async function renderStageImport(c) {
       <div><label>Altitude maximale (m)</label><input id="si-amax" type="number" value="150"></div><div><label>Type de course</label>${selHtml('si-type', TYPES, 'AUTO')}</div>
       <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div>
       <div><label>Tag (ex. #tdf2026)</label><input id="si-tag" placeholder="#tdf2026"></div>
-      <div><label>Détecter les pavés (zones grises)</label><input id="si-cob" type="checkbox"></div></div>
-    <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG), ou cliquez pour la choisir</div><input id="si-file" type="file" accept="image/*" hidden>
+      <div><label>Détecter les pavés (zones grises, images)</label><input id="si-cob" type="checkbox"></div></div>
+    <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG) ou un fichier PCM .cds, ou cliquez pour le choisir</div><input id="si-file" type="file" accept="image/*,.cds" hidden>
     <div id="si-prev"></div><div class="err" id="si-err"></div><div class="rov-btns"><button id="si-save" disabled>Générer l'étape</button></div></div>`;
-  let img = null, P = null, D = null, info = null; const val = (id) => $(id).value;
-  const build = () => {
+  let img = null, P = null, D = null, info = null, cds = null; const val = (id) => $(id).value;
+  const build = () => (cds ? buildCds() : buildImg());
+  const buildImg = () => {
     if (!img) return; $('si-err').textContent = '';
     const mode0 = $('si-mode') ? $('si-mode').value : '3';
     try {
@@ -402,7 +427,44 @@ async function renderStageImport(c) {
       siBindEditor(P, km, build, () => info, (d) => { info = info || {}; Object.assign(info, d, { manual: true }); });
     } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
   };
+  // Profil issu d'un fichier .cds : altitudes exactes du fichier, cols détectés sur le relief puis corrigeables dans le tableau
+  const buildCds = () => {
+    $('si-err').textContent = '';
+    try {
+      const r = cds.runs[cds.sel], div = r.x1 - r.x0 > 1000 ? 1000 : 1, dist = Math.round(((r.x1 - r.x0) / div) * 10) / 10, step = Math.max(1, Math.floor(r.pts.length / 700)), pts = [];
+      for (let i = 0; i < r.pts.length; i += step) pts.push([+((r.pts[i][0] - r.x0) / div).toFixed(3), Math.round(r.pts[i][1])]);
+      pts.push([dist, Math.round(r.pts[r.pts.length - 1][1])]);
+      const alts = pts.map((p) => p[1]);
+      $('si-km').value = Math.max(10, Math.round(dist)); $('si-amin').value = Math.min(...alts); $('si-amax').value = Math.max(...alts);
+      const D0 = { km: dist, altMin: Math.min(...alts), altMax: Math.max(...alts), points: pts, cobbles: [], marks: [], icons: cds.icons, manual: cds.manual, anchors: [], calibrated: true };
+      const tmp = { name: val('si-name') || 'Étape', distance_km: dist, profile_type: 'FLAT', profile_data: D0 };
+      let type = val('si-type');
+      if (type === 'AUTO') { const asc = simProfileFromData(tmp).climbs.reduce((s, x) => s + x.gain, 0); type = asc / dist < 8 ? 'FLAT' : asc / dist < 22 ? 'HILLS' : 'MOUNTAIN'; }
+      D = { ...D0, type }; P = simProfileFromData({ ...tmp, profile_type: type, profile_data: D });
+      const mode0 = $('si-mode') ? $('si-mode').value : '3';
+      $('si-prev').innerHTML = `<div class="sq-ctl" style="margin:.6rem 0"><label style="margin:0">Liste de données du fichier :</label><select id="si-run">${cds.runs.map((q, i) => `<option value="${i}" ${i === cds.sel ? 'selected' : ''}>${i + 1}. ${q.pts.length} points · x ${Math.round(q.x0)} → ${Math.round(q.x1)} · altitude ${Math.round(q.ymin)} → ${Math.round(q.ymax)}${q.swap ? ' (inversé)' : ''}</option>`).join('')}</select></div>
+        <div class="muted" style="font-size:.78rem;margin-bottom:.4rem">${PROFILES[type] || type} · ${P.km} km · ${P.minAlt}-${P.maxAlt} m · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s)</div>
+        ${renderRaceProfileSVG(P, 0, [])}<div class="muted" style="font-size:.72rem;margin-top:.4rem">Textes trouvés dans le fichier : ${esc(cds.strings.slice(0, 40).join(' | '))}</div>`;
+      $('si-run').onchange = (e) => { cds.sel = +e.target.value; build(); };
+      $('si-save').disabled = false;
+      $('si-prev').insertAdjacentHTML('beforeend', siEditorHTML(P, [], mode0));
+      siBindEditor(P, dist, build, () => null, (d) => { cds.icons = d.icons; cds.manual = true; });
+    } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
+  };
+  const loadCds = async (f) => {
+    try {
+      const r = await simReadCds(f);
+      if (!r.runs.length) throw new Error('Aucun profil lisible dans ce fichier.');
+      cds = { ...r, sel: 0, icons: [], manual: false }; img = null; info = null;
+      const nm = r.strings.find((t) => / - /.test(t));
+      if (nm) $('si-name').value = nm.replace(/\.$/, '');
+      $('si-drop').textContent = 'Fichier .cds chargé : ' + f.name + ' (glissez-en un autre pour le remplacer)';
+      build();
+    } catch (e) { cds = null; P = null; $('si-save').disabled = true; $('si-err').textContent = e.message; }
+  };
   const load = (f) => {
+    if (f && /\.cds$/i.test(f.name)) return loadCds(f);
+    cds = null;
     if (!f || !f.type.startsWith('image/')) return;
     const im = new Image();
     im.onload = async () => {
@@ -425,7 +487,7 @@ async function renderStageImport(c) {
   ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { info = info || {}; info.cal = null; info.manualScale = true; build(); }));
   $('si-save').onclick = async () => {
     const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
-    if (!name || !date || !P) return (err.textContent = 'Nom, date et image du profil sont obligatoires.');
+    if (!name || !date || !P) return (err.textContent = 'Nom, date et profil (image ou fichier .cds) sont obligatoires.');
     $('si-save').disabled = true;
     const { error } = await sb.from('races').insert({ name, date, status: 'SCHEDULED', profile_type: P.type, distance_km: P.km, elevation_m: Math.round(P.climbs.reduce((s, x) => s + x.gain, 0)), category: val('si-cat'), travel_km: +val('si-travel') || 0, tag: siTag(val('si-tag')), profile_data: D });
     if (error) { $('si-save').disabled = false; return (err.textContent = error.message); }

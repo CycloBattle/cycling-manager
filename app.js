@@ -1051,7 +1051,56 @@ async function applyTrainingEffects(daysPassed = 1, startIso = state.game.game_d
   for (let i = 0; i < patches.length; i += 15) await Promise.all(patches.slice(i, i + 15).map((x) => sb.from('riders').update(x.p).eq('id', x.id)));
   return { ...sum, riders: patches.length };
 }
+/* ===== Graphique en toile d'araignée et comparaison de coureurs ===== */
+const RADAR_AX = ['GC', 'MTN', 'TTR', 'SPR', 'HIL', 'COB', 'BAR'];
+const RADAR_ATTRS = ['MTN', 'MM', 'HIL', 'DHI', 'ATT', 'TTR', 'PRL', 'FLA', 'COB', 'SPR', 'ACC', 'STA', 'RES', 'REC'];
+function radarVals(r) {
+  const A = attrsOf(r), v = (k) => Number(A[k]) || 50;
+  return { GC: (v('MTN') + v('TTR') + v('RES')) / 3, MTN: v('MTN'), TTR: v('TTR'), SPR: v('SPR'), HIL: v('HIL'), COB: v('COB'), BAR: (v('FLA') + v('ATT')) / 2 };
+}
+function radarSVG(list) {   // list : [{ r: coureur, color }], échelle de 40 à 90
+  const cx = 120, cy = 112, R = 72, n = RADAR_AX.length, ang = (i) => ((-90 + (i * 360) / n) * Math.PI) / 180;
+  const pt = (i, f) => `${(cx + Math.cos(ang(i)) * R * f).toFixed(1)},${(cy + Math.sin(ang(i)) * R * f).toFixed(1)}`;
+  const rings = [0.25, 0.5, 0.75, 1].map((f) => `<polygon points="${RADAR_AX.map((_, i) => pt(i, f)).join(' ')}" fill="none" stroke="#475569" stroke-width="1" opacity=".7"/>`).join('');
+  const spokes = RADAR_AX.map((_, i) => `<line x1="${cx}" y1="${cy}" x2="${pt(i, 1).split(',')[0]}" y2="${pt(i, 1).split(',')[1]}" stroke="#475569" opacity=".5"/>`).join('');
+  const labels = RADAR_AX.map((k, i) => `<text x="${(cx + Math.cos(ang(i)) * (R + 16)).toFixed(1)}" y="${(cy + Math.sin(ang(i)) * (R + 16) + 4).toFixed(1)}" text-anchor="middle" font-size="11" fill="#cbd5e1">${k}</text>`).join('');
+  const polys = list.map(({ r, color }) => { const v = radarVals(r); return `<polygon points="${RADAR_AX.map((k, i) => pt(i, Math.max(0.03, Math.min(1, (v[k] - 40) / 50)))).join(' ')}" fill="${color}" fill-opacity=".12" stroke="${color}" stroke-width="2.2"/>`; }).join('');
+  return `<svg viewBox="0 0 240 224" style="width:100%;max-width:300px;display:block;margin:.4rem auto">${rings}${spokes}${polys}${labels}</svg>`;
+}
+const riderRadarHTML = (r) => `<div class="muted" style="margin-top:.6rem">Profil du coureur</div>${radarSVG([{ r, color: '#facc15' }])}`;
 
+async function openRiderCompare(id) {
+  const { data: base } = await sb.from('riders').select('*').eq('id', id).maybeSingle();
+  if (!base) return toast('Coureur introuvable.');
+  const ov = document.createElement('div'); ov.className = 'adm-ov'; ov.id = 'cmp-modal';
+  ov.innerHTML = `<div class="adm-box" style="max-width:640px"><div class="neg-head"><h3 style="margin:0">Comparer ${esc(base.first_name)} ${esc(base.last_name)}</h3><button class="link" id="cmp-x">Fermer</button></div>
+    <input id="cmp-q" placeholder="Rechercher un coureur à comparer" style="width:100%"><div id="cmp-list" class="cmp-list"></div><div id="cmp-res"></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove(); $('cmp-x').onclick = close; ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
+  let timer = null;
+  const search = async () => {
+    const q = $('cmp-q').value.replace(/[^\p{L}\p{N} '-]/gu, '').trim();
+    let req = sb.from('riders').select('id, first_name, last_name, age, nationality, teams(name)').neq('id', id).limit(15);
+    req = q ? req.or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`) : req.in('team_id', myTeamIds());
+    const { data } = await req;
+    $('cmp-list').innerHTML = (data || []).map((x) => `<div class="cmp-it" data-cmpid="${x.id}"><b>${esc(x.first_name)} ${esc(x.last_name)}</b><span class="muted">${x.age} ans · ${esc(x.teams?.name || 'Libre')}</span></div>`).join('') || '<p class="muted">Aucun coureur trouvé.</p>';
+  };
+  $('cmp-q').oninput = () => { clearTimeout(timer); timer = setTimeout(search, 250); };
+  $('cmp-list').onclick = async (e) => {
+    const it = e.target.closest('[data-cmpid]'); if (!it) return;
+    const { data: o } = await sb.from('riders').select('*').eq('id', it.dataset.cmpid).maybeSingle(); if (!o) return;
+    const A = attrsOf(base), B = attrsOf(o), nm = (r) => `${esc(r.first_name)} ${esc(r.last_name)}`;
+    $('cmp-res').innerHTML = `<div style="display:flex;gap:1rem;justify-content:center;font-size:.85rem"><span style="color:#facc15">● ${nm(base)}</span><span style="color:#60a5fa">● ${nm(o)}</span></div>
+      ${radarSVG([{ r: base, color: '#facc15' }, { r: o, color: '#60a5fa' }])}
+      <div class="tbl"><table class="fm sq"><thead><tr><th>Note</th><th style="color:#facc15">${esc(base.last_name)}</th><th style="color:#60a5fa">${esc(o.last_name)}</th><th>Écart</th></tr></thead><tbody>
+      ${RADAR_ATTRS.map((k) => { const a = Number(A[k]) || 0, b = Number(B[k]) || 0, d = a - b; return `<tr><td><b>${k}</b></td><td>${a}</td><td>${b}</td><td class="${d > 0 ? 'up' : d < 0 ? 'down' : ''}">${d > 0 ? '+' : ''}${d}</td></tr>`; }).join('')}</tbody></table></div>`;
+  };
+  search();
+}
+if (!window.cmpBound) {
+  window.cmpBound = true;
+  document.addEventListener('click', (e) => { const b = e.target.closest('[data-compare]'); if (b) openRiderCompare(b.dataset.compare); });
+}
 // ---------- Démarrage ----------
 (async function boot() {
   const { data: { session } } = await sb.auth.getSession();

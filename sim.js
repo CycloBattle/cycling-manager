@@ -374,8 +374,18 @@ function simProfileFromData(race) {
 
 /* ===== Lecteur de fichiers PCM .cds (CTStageData) ===== */
 // Cherche dans le fichier les listes de paires (distance, altitude) en nombres décimaux 32 bits, et extrait les textes (nom de l'étape…)
+async function simInflate(buf) {   // décompression d'un .zces : essaie plusieurs formats et décalages
+  for (const off of [0, 2, 4, 8, 12, 16]) for (const fmt of ['deflate-raw', 'deflate', 'gzip']) {
+    try {
+      const out = await new Response(new Blob([buf.slice(off)]).stream().pipeThrough(new DecompressionStream(fmt))).arrayBuffer();
+      if (out.byteLength > 2000) return out;
+    } catch (e) { /* format suivant */ }
+  }
+  throw new Error('Fichier .zces non décompressé : utilisez le fichier .cds correspondant.');
+}
 async function simReadCds(file) {
-  const buf = await file.arrayBuffer(), dv = new DataView(buf), u8 = new Uint8Array(buf), n = buf.byteLength, strings = [];
+  let buf0 = await file.arrayBuffer(); if (/\.zces$/i.test(file.name)) buf0 = await simInflate(buf0);
+  const buf = buf0, dv = new DataView(buf), u8 = new Uint8Array(buf), n = buf.byteLength, strings = [];
   let s = '';
   for (let i = 0; i <= n; i++) { const c = i < n ? u8[i] : 0; if (c >= 32 && c < 127) s += String.fromCharCode(c); else { if (s.trim().length >= 4) strings.push(s.trim()); s = ''; } }
   const f = (o) => dv.getFloat32(o, true), runs = [];
@@ -393,7 +403,9 @@ async function simReadCds(file) {
     }
   }
   runs.sort((a, b) => b.pts.length - a.pts.length);
-  return { strings, runs: runs.slice(0, 8) };
+  const hdr = [];   // distances possibles écrites dans l'en-tête du fichier
+  for (let o = 0; o < Math.min(n - 4, 400); o++) { const v = dv.getFloat32(o, true); if (!isFinite(v)) continue; if (v >= 20000 && v <= 300000) hdr.push(+(v / 1000).toFixed(1)); else if (v >= 20 && v <= 300 && Math.abs(v - Math.round(v)) < 1e-3) hdr.push(Math.round(v)); }
+  return { strings, runs: runs.slice(0, 8), hdr: [...new Set(hdr)].slice(0, 6) };
 }
 
 // Admin : glisser une image de profil (ou un fichier .cds) + nom + date → l'étape est créée dans le calendrier
@@ -406,7 +418,7 @@ async function renderStageImport(c) {
       <div><label>Catégorie</label>${selHtml('si-cat', CATS, '1.1')}</div><div><label>Distance de voyage (km)</label><input id="si-travel" type="number" min="0" value="0"></div>
       <div><label>Tag (ex. #tdf2026)</label><input id="si-tag" placeholder="#tdf2026"></div>
       <div><label>Détecter les pavés (zones grises, images)</label><input id="si-cob" type="checkbox"></div></div>
-    <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG) ou un fichier PCM .cds, ou cliquez pour le choisir</div><input id="si-file" type="file" accept="image/*,.cds" hidden>
+    <div id="si-drop" class="si-drop">Glissez ici l'image du profil (PNG ou JPG) ou un fichier PCM .cds, ou cliquez pour le choisir</div><input id="si-file" type="file" accept="image/*,.cds,.zces" hidden>
     <div id="si-prev"></div><div class="err" id="si-err"></div><div class="rov-btns"><button id="si-save" disabled>Générer l'étape</button></div></div>`;
   let img = null, P = null, D = null, info = null, cds = null; const val = (id) => $(id).value;
   const build = () => (cds ? buildCds() : buildImg());
@@ -428,24 +440,31 @@ async function renderStageImport(c) {
     } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
   };
   // Profil issu d'un fichier .cds : altitudes exactes du fichier, cols détectés sur le relief puis corrigeables dans le tableau
-  const buildCds = () => {
+   const buildCds = () => {
     $('si-err').textContent = '';
     try {
-      const r = cds.runs[cds.sel], div = r.x1 - r.x0 > 1000 ? 1000 : 1, dist = Math.round(((r.x1 - r.x0) / div) * 10) / 10, step = Math.max(1, Math.floor(r.pts.length / 700)), pts = [];
-      for (let i = 0; i < r.pts.length; i += step) pts.push([+((r.pts[i][0] - r.x0) / div).toFixed(3), Math.round(r.pts[i][1])]);
-      pts.push([dist, Math.round(r.pts[r.pts.length - 1][1])]);
-      const alts = pts.map((p) => p[1]);
-      $('si-km').value = Math.max(10, Math.round(dist)); $('si-amin').value = Math.min(...alts); $('si-amax').value = Math.max(...alts);
-      const D0 = { km: dist, altMin: Math.min(...alts), altMax: Math.max(...alts), points: pts, cobbles: [], marks: [], icons: cds.icons, manual: cds.manual, anchors: [], calibrated: true };
+      const r = cds.runs[cds.sel], span = r.x1 - r.x0, div = span > 1000 ? 1000 : 1, kmRaw = span / div;
+      const dist = cds.userKm ? Math.max(10, +val('si-km') || kmRaw) : Math.round(kmRaw * 10) / 10, f = dist / kmRaw, step = Math.max(1, Math.floor(r.pts.length / 700)), pts = [];
+      for (let i = 0; i < r.pts.length; i += step) pts.push([+((((r.pts[i][0] - r.x0) / div) * f)).toFixed(3), r.pts[i][1]]);
+      pts.push([dist, r.pts[r.pts.length - 1][1]]);
+      let ys = pts.map((p) => p[1]), lo = Math.min(...ys), hi = Math.max(...ys), note = '';
+      if (cds.userAlt && hi > lo) { const a0 = +val('si-amin'), a1 = +val('si-amax'); pts.forEach((p) => (p[1] = a0 + ((p[1] - lo) * (a1 - a0)) / (hi - lo))); note = `Altitudes recalées entre ${a0} et ${a1} m (vos valeurs).`; }
+      else { const mg = siMaxGrade({ points: pts }); if (mg > 16) { const k = 12 / mg; pts.forEach((p) => (p[1] = lo + (p[1] - lo) * k)); note = `Pentes irréalistes (${mg.toFixed(0)} % sur 2 km) : altitudes recalées ×${k.toFixed(2)}. Saisissez les vraies altitudes min et max pour les fixer.`; } }
+      pts.forEach((p) => (p[1] = Math.round(p[1]))); ys = pts.map((p) => p[1]);
+      if (!cds.userKm) $('si-km').value = dist;
+      if (!cds.userAlt) { $('si-amin').value = Math.min(...ys); $('si-amax').value = Math.max(...ys); }
+      const D0 = { km: dist, altMin: Math.min(...ys), altMax: Math.max(...ys), points: pts, cobbles: [], marks: [], icons: cds.icons, manual: cds.manual, anchors: [], calibrated: true };
       const tmp = { name: val('si-name') || 'Étape', distance_km: dist, profile_type: 'FLAT', profile_data: D0 };
       let type = val('si-type');
       if (type === 'AUTO') { const asc = simProfileFromData(tmp).climbs.reduce((s, x) => s + x.gain, 0); type = asc / dist < 8 ? 'FLAT' : asc / dist < 22 ? 'HILLS' : 'MOUNTAIN'; }
       D = { ...D0, type }; P = simProfileFromData({ ...tmp, profile_type: type, profile_data: D });
-      const mode0 = $('si-mode') ? $('si-mode').value : '3';
-      $('si-prev').innerHTML = `<div class="sq-ctl" style="margin:.6rem 0"><label style="margin:0">Liste de données du fichier :</label><select id="si-run">${cds.runs.map((q, i) => `<option value="${i}" ${i === cds.sel ? 'selected' : ''}>${i + 1}. ${q.pts.length} points · x ${Math.round(q.x0)} → ${Math.round(q.x1)} · altitude ${Math.round(q.ymin)} → ${Math.round(q.ymax)}${q.swap ? ' (inversé)' : ''}</option>`).join('')}</select></div>
-        <div class="muted" style="font-size:.78rem;margin-bottom:.4rem">${PROFILES[type] || type} · ${P.km} km · ${P.minAlt}-${P.maxAlt} m · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s)</div>
-        ${renderRaceProfileSVG(P, 0, [])}<div class="muted" style="font-size:.72rem;margin-top:.4rem">Textes trouvés dans le fichier : ${esc(cds.strings.slice(0, 40).join(' | '))}</div>`;
+      const mode0 = $('si-mode') ? $('si-mode').value : '3', dopt = [[kmRaw, `Lue dans la liste : ${kmRaw.toFixed(1)} km`], ...(cds.hdr || []).map((v) => [v, `En-tête du fichier : ${v} km`])];
+      $('si-prev').innerHTML = `<div class="sq-ctl" style="margin:.6rem 0;flex-wrap:wrap"><label style="margin:0">Liste de données :</label><select id="si-run">${cds.runs.map((q, i) => `<option value="${i}" ${i === cds.sel ? 'selected' : ''}>${i + 1}. ${q.pts.length} points · x ${Math.round(q.x0)} → ${Math.round(q.x1)} · altitude ${Math.round(q.ymin)} → ${Math.round(q.ymax)}${q.swap ? ' (inversé)' : ''}</option>`).join('')}</select>
+          <label style="margin:0 0 0 .8rem">Distance :</label><select id="si-dist"><option value="">${dist} km (actuelle)</option>${dopt.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></div>
+        <div class="muted" style="font-size:.78rem;margin-bottom:.4rem">${PROFILES[type] || type} · ${P.km} km · ${P.minAlt}-${P.maxAlt} m · pente max. ${siMaxGrade(P).toFixed(1)} % · ${P.climbs.length} col(s) · ${P.sprints.length} sprint(s)</div>
+        ${note ? `<div class="down" style="font-size:.8rem;margin-bottom:.4rem">${note}</div>` : ''}${renderRaceProfileSVG(P, 0, [])}<div class="muted" style="font-size:.72rem;margin-top:.4rem">Textes trouvés dans le fichier : ${esc(cds.strings.slice(0, 40).join(' | '))}</div>`;
       $('si-run').onchange = (e) => { cds.sel = +e.target.value; build(); };
+      $('si-dist').onchange = (e) => { if (!e.target.value) return; cds.userKm = true; $('si-km').value = e.target.value; build(); };
       $('si-save').disabled = false;
       $('si-prev').insertAdjacentHTML('beforeend', siEditorHTML(P, [], mode0));
       siBindEditor(P, dist, build, () => null, (d) => { cds.icons = d.icons; cds.manual = true; });
@@ -463,7 +482,7 @@ async function renderStageImport(c) {
     } catch (e) { cds = null; P = null; $('si-save').disabled = true; $('si-err').textContent = e.message; }
   };
   const load = (f) => {
-    if (f && /\.cds$/i.test(f.name)) return loadCds(f);
+    if (f && /\.(cds|zces)$/i.test(f.name)) return loadCds(f);
     cds = null;
     if (!f || !f.type.startsWith('image/')) return;
     const im = new Image();
@@ -483,8 +502,9 @@ async function renderStageImport(c) {
   dz.onclick = () => $('si-file').click(); $('si-file').onchange = (e) => load(e.target.files[0]);
   dz.ondragover = (e) => { e.preventDefault(); dz.classList.add('on'); }; dz.ondragleave = () => dz.classList.remove('on');
   dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove('on'); load(e.dataTransfer.files[0]); };
-  ['si-km', 'si-type', 'si-name'].forEach((id) => ($(id).oninput = build)); $('si-cob').onchange = build;
-  ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { info = info || {}; info.cal = null; info.manualScale = true; build(); }));
+  ['si-type', 'si-name'].forEach((id) => ($(id).oninput = build)); $('si-cob').onchange = build;
+  $('si-km').oninput = () => { if (cds) cds.userKm = true; build(); };
+    ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { if (cds) cds.userAlt = true; info = info || {}; info.cal = null; info.manualScale = true; build(); })); info.cal = null; info.manualScale = true; build(); }));
   $('si-save').onclick = async () => {
     const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
     if (!name || !date || !P) return (err.textContent = 'Nom, date et profil (image ou fichier .cds) sont obligatoires.');

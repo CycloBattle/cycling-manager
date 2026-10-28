@@ -281,3 +281,6 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 
 .si-drop { margin:.8rem 0; padding:1.6rem; border:2px dashed #4b5563; border-radius:10px; text-align:center; color:var(--muted); cursor:pointer; }
 .si-drop.on, .si-drop:hover { border-color:#a78bfa; background:#4c1d9522; color:#e5e7eb; }
+
+.cmp-list { max-height:180px; overflow:auto; margin:.5rem 0; border:1px solid var(--line); border-radius:6px; }
+.cmp-it { display:flex; justify-content:space-between; gap:.6rem; padding:.45rem .6rem; border-bottom:1px solid var(--line); cursor:pointer; } .cmp-it:hover { background:#4c1d9533; }

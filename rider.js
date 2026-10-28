@@ -119,7 +119,7 @@ async function renderRider(c) {
         <div class="stat-row"><span>Réputation<small>${deep ? rep + ' sur 5' : ''}</small></span><b>${deep ? REPUTATIONS[rep - 1] : '?'}</b></div>
         <div class="stat-row"><span>Personnalité</span><b>${deep ? esc(traits.join(', ')) : '?'}</b></div>
         <div class="stat-row"><span>Spécialité</span><b>${SPEC_NAMES[r.spec]}</b></div>
-        ${langHTML}<div class="legend"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
+        ${langHTML}${riderRadarHTML(r)}<div class="legend"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
     </div>
     <div class="scards">
       ${card("État d'esprit", known ? `<div class="mo ${moodCls} big">${mood}</div><div class="muted">Points positifs ${pos.length} · négatifs ${neg.length}</div><small>${pos.concat(neg).map(esc).join('<br>')}</small>` : hid)}

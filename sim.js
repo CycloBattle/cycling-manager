@@ -373,8 +373,8 @@ function simProfileFromData(race) {
 }
 
 /* ===== Lecteur de fichiers PCM .cds (CTStageData) ===== */
-// Cherche dans le fichier les listes de paires (distance, altitude) en nombres décimaux 32 bits, et extrait les textes (nom de l'étape…)
-async function simInflate(buf) {   // décompression d'un .zces : essaie plusieurs formats et décalages
+// Décompression d'un .zces : essaie plusieurs formats et décalages
+async function simInflate(buf) {
   for (const off of [0, 2, 4, 8, 12, 16]) for (const fmt of ['deflate-raw', 'deflate', 'gzip']) {
     try {
       const out = await new Response(new Blob([buf.slice(off)]).stream().pipeThrough(new DecompressionStream(fmt))).arrayBuffer();
@@ -383,6 +383,7 @@ async function simInflate(buf) {   // décompression d'un .zces : essaie plusieu
   }
   throw new Error('Fichier .zces non décompressé : utilisez le fichier .cds correspondant.');
 }
+// Cherche dans le fichier les listes de paires (distance, altitude) en nombres décimaux 32 bits, et extrait les textes (nom de l'étape…)
 async function simReadCds(file) {
   let buf0 = await file.arrayBuffer(); if (/\.zces$/i.test(file.name)) buf0 = await simInflate(buf0);
   const buf = buf0, dv = new DataView(buf), u8 = new Uint8Array(buf), n = buf.byteLength, strings = [];
@@ -439,8 +440,8 @@ async function renderStageImport(c) {
       siBindEditor(P, km, build, () => info, (d) => { info = info || {}; Object.assign(info, d, { manual: true }); });
     } catch (e) { P = null; $('si-save').disabled = true; $('si-prev').innerHTML = ''; $('si-err').textContent = e.message; }
   };
-  // Profil issu d'un fichier .cds : altitudes exactes du fichier, cols détectés sur le relief puis corrigeables dans le tableau
-   const buildCds = () => {
+  // Profil issu d'un fichier .cds : altitudes du fichier, distance au choix, cols détectés sur le relief puis corrigeables dans le tableau
+  const buildCds = () => {
     $('si-err').textContent = '';
     try {
       const r = cds.runs[cds.sel], span = r.x1 - r.x0, div = span > 1000 ? 1000 : 1, kmRaw = span / div;
@@ -477,7 +478,7 @@ async function renderStageImport(c) {
       cds = { ...r, sel: 0, icons: [], manual: false }; img = null; info = null;
       const nm = r.strings.find((t) => / - /.test(t));
       if (nm) $('si-name').value = nm.replace(/\.$/, '');
-      $('si-drop').textContent = 'Fichier .cds chargé : ' + f.name + ' (glissez-en un autre pour le remplacer)';
+      $('si-drop').textContent = 'Fichier chargé : ' + f.name + ' (glissez-en un autre pour le remplacer)';
       build();
     } catch (e) { cds = null; P = null; $('si-save').disabled = true; $('si-err').textContent = e.message; }
   };
@@ -504,7 +505,7 @@ async function renderStageImport(c) {
   dz.ondrop = (e) => { e.preventDefault(); dz.classList.remove('on'); load(e.dataTransfer.files[0]); };
   ['si-type', 'si-name'].forEach((id) => ($(id).oninput = build)); $('si-cob').onchange = build;
   $('si-km').oninput = () => { if (cds) cds.userKm = true; build(); };
-    ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { if (cds) cds.userAlt = true; info = info || {}; info.cal = null; info.manualScale = true; build(); })); info.cal = null; info.manualScale = true; build(); }));
+  ['si-amin', 'si-amax'].forEach((id) => ($(id).oninput = () => { if (cds) cds.userAlt = true; info = info || {}; info.cal = null; info.manualScale = true; build(); }));
   $('si-save').onclick = async () => {
     const name = val('si-name').trim(), date = val('si-date'), err = $('si-err'); err.textContent = '';
     if (!name || !date || !P) return (err.textContent = 'Nom, date et profil (image ou fichier .cds) sont obligatoires.');

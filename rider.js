@@ -78,11 +78,12 @@ async function renderRider(c) {
   const obsBox = own ? '' : `<div class="rbox"><div class="muted">Connaissance : ${kn}%</div><div class="meter"><i style="width:${kn}%"></i></div><div class="muted">${watching ? 'Observation en cours' : kn >= 100 ? 'Observation terminée' : 'Aucune observation en cours'} · ${used} active(s)</div></div>`;
   // Menu « Actions » : une entrée = { label, act, off (grisée), sub (flèche) }. Pour une future action : ajoutez une ligne ici et un « else if » plus bas.
   const watched = !!wl.data, offerOpen = (ofr.data || []).length > 0;
-  const ACTIONS = own ? [] : [
+  const ACTIONS = own ? [{ label: 'Comparer', act: 'compare' }] : [
     { label: watching ? 'Observation en cours' : kn >= 100 ? 'Observation terminée' : 'Observer ce coureur', act: 'observe', off: watching || kn >= 100 },
     ...(watching ? [{ label: "Arrêter l'observation", act: 'stopobs' }] : []),
     { label: offerOpen ? 'Offre en cours (voir)' : 'Faire une offre', act: 'offer' },
     { label: watched ? 'Retirer de la liste de sélection' : 'Ajouter à la liste de sélection', act: 'watch' },
+    { label: 'Comparer', act: 'compare' },
     { sep: true },
     { label: 'Transfert', off: true, sub: true },
     { label: 'Rapport', off: true, sub: true },
@@ -98,11 +99,11 @@ async function renderRider(c) {
   const row = ([code, label]) => `<div class="arow"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${attrCell(code)}</span></div>`;
   const card = (title, body) => `<div class="scard"><h5>${title}</h5>${body}</div>`;
   const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
- 
+
   c.innerHTML = `
     <div class="crumb"><a data-back>Effectif</a> › Rapport de coureur</div>
     <div class="rhead">
-            ${avatarWithEdit(r, 'rider')}
+      ${avatarWithEdit(r, 'rider')}
       <div class="rid"><div class="rname">${esc(r.first_name)} ${esc(r.last_name)} <span class="bd blue">${num}</span> ${watchers.length ? `<span class="bd green obs">Observé<span class="obs-pop"><b>Observé par :</b>${watchers.map((n) => `<div>(Transfert - ${esc(n)})</div>`).join('')}</span></span>` : ''}</div>
         <div class="muted">${r.age} ans · ${flag(r.nationality)}</div>
         <div class="rbad"><span class="bd violet">${SPEC_NAMES[r.spec]}</span> <span class="bd spec">${esc(r.role)}</span>${r.u23 ? ' <span class="bd amber">Espoir U23</span>' : ''}${known && A.MTN >= 78 ? ' <span class="bd gold">Montagne max</span>' : ''}</div>${actionsMenu}</div>
@@ -138,6 +139,7 @@ async function renderRider(c) {
       if (b.dataset.act === 'observe') rpc('start_observation', 'Observation lancée : la connaissance progresse à chaque jour de jeu.');
       else if (b.dataset.act === 'stopobs') rpc('stop_observation', 'Observation arrêtée.');
       else if (b.dataset.act === 'offer') { if (typeof openNegotiationModal === 'function') openNegotiationModal(r0.id); else toast("Le module d'offre n'est pas chargé."); }
+      else if (b.dataset.act === 'compare') { if (typeof openRiderCompare === 'function') openRiderCompare(r0.id); else toast("Le module de comparaison n'est pas chargé (bloc à ajouter dans app.js)."); }
       else if (b.dataset.act === 'watch') {
         const { error } = await (watched ? sb.from('watchlist').delete().eq('team_id', mine).eq('rider_id', r0.id) : sb.from('watchlist').insert({ team_id: mine, rider_id: r0.id }));
         if (error) return toast(error.message);

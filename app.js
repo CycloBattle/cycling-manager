@@ -1077,15 +1077,28 @@ async function openRiderCompare(id) {
     <input id="cmp-q" placeholder="Rechercher un coureur à comparer" style="width:100%"><div id="cmp-list" class="cmp-list"></div><div id="cmp-res"></div></div>`;
   document.body.appendChild(ov);
   const close = () => ov.remove(); $('cmp-x').onclick = close; ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
-  let timer = null;
+    const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  let all = null, tn = {};
   const search = async () => {
-    const q = $('cmp-q').value.replace(/[^\p{L}\p{N} '-]/gu, '').trim();
-    let req = sb.from('riders').select('id, first_name, last_name, age, nationality, teams(name)').neq('id', id).limit(15);
-    req = q ? req.or(`last_name.ilike.%${q}%,first_name.ilike.%${q}%`) : req.in('team_id', myTeamIds());
-    const { data } = await req;
-    $('cmp-list').innerHTML = (data || []).map((x) => `<div class="cmp-it" data-cmpid="${x.id}"><b>${esc(x.first_name)} ${esc(x.last_name)}</b><span class="muted">${x.age} ans · ${esc(x.teams?.name || 'Libre')}</span></div>`).join('') || '<p class="muted">Aucun coureur trouvé.</p>';
+    const box = $('cmp-list'); if (!box) return;
+    if (!all) {
+      box.innerHTML = '<p class="muted" style="padding:.5rem">Chargement des coureurs…</p>';
+      const t = await sb.from('teams').select('id, name, official_name'); tn = Object.fromEntries((t.data || []).map((x) => [x.id, x.official_name || x.name]));
+      const rows = [];
+      for (let from = 0; from < 20000; from += 1000) {
+        const { data, error } = await sb.from('riders').select('id, first_name, last_name, age, team_id').order('id').range(from, from + 999);
+        if (error) { box.innerHTML = `<p class="err" style="padding:.5rem">${esc(error.message)}</p>`; return; }
+        rows.push(...(data || [])); if (!data || data.length < 1000) break;
+      }
+      all = rows;
+    }
+    const words = norm($('cmp-q').value).split(/\s+/).filter(Boolean), mineSet = new Set(myTeamIds());
+    let list = all.filter((x) => x.id !== id && words.every((w) => norm(x.first_name + ' ' + x.last_name).includes(w)));
+    if (!words.length) list = list.filter((x) => mineSet.has(x.team_id));
+    list.sort((a, b) => a.last_name.localeCompare(b.last_name, 'fr'));
+    box.innerHTML = list.slice(0, 40).map((x) => `<div class="cmp-it" data-cmpid="${x.id}"><b>${esc(x.first_name)} ${esc(x.last_name)}</b><span class="muted">${x.age} ans · ${esc(tn[x.team_id] || 'Libre')}</span></div>`).join('') || '<p class="muted" style="padding:.5rem">Aucun coureur trouvé.</p>';
   };
-  $('cmp-q').oninput = () => { clearTimeout(timer); timer = setTimeout(search, 250); };
+  $('cmp-q').oninput = search;
   $('cmp-list').onclick = async (e) => {
     const it = e.target.closest('[data-cmpid]'); if (!it) return;
     const { data: o } = await sb.from('riders').select('*').eq('id', it.dataset.cmpid).maybeSingle(); if (!o) return;

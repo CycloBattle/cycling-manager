@@ -297,4 +297,11 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .scards { grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); }
 @media (max-width:1350px) { .rmain { grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); } .rcell { border-bottom:1px solid var(--line); } }
 
-
+.scards { display:grid !important; grid-template-columns:1fr 1fr 1fr 2fr !important; gap:.75rem; align-items:stretch; margin-top:.75rem; }
+.scards > .scard { margin:0 !important; min-width:0; min-height:150px; padding:.7rem .9rem; background:#0b1020cc; border:1px solid var(--line); border-radius:10px; display:flex; flex-direction:column; }
+.scards > .scard h5 { margin:0 0 .5rem; font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+.scards > .scard small { margin-top:auto; line-height:1.5; }
+.scards > .scard .meter { width:100%; margin:.5rem 0; }
+.scards > .scard table { width:100%; }
+@media (max-width:1250px) { .scards { grid-template-columns:1fr 1fr !important; } }
+@media (max-width:650px) { .scards { grid-template-columns:1fr !important; } }

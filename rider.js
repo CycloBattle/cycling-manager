@@ -96,7 +96,10 @@ async function renderRider(c) {
     if (kn >= 20) { const [lo, hi] = attrRange(A[code], r.id, code, kn, fq.ca); return `<span class="an g0">${lo}-${hi}</span>`; }
     return '<span class="an g0">?</span>';
   };
-  const row = ([code, label]) => `<div class="arow"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${attrCell(code)}</span></div>`;
+    const topK = Object.entries(A).sort((a, b) => b[1] - a[1]).slice(0, 4).map((x) => x[0]);   // meilleures notes : surlignées
+  const row = ([code, label]) => `<div class="arow ${known && topK.includes(code) ? 'key' : ''}"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${attrCell(code)}</span></div>`;
+  const ROLEDEF = [['Grimpeur', ['MTN', 'MM', 'STA']], ['Puncheur', ['HIL', 'ATT', 'ACC']], ['Rouleur / chrono', ['TTR', 'PRL', 'FLA']], ['Sprinteur', ['SPR', 'ACC', 'FLA']], ['Classiques / pavés', ['COB', 'FLA', 'ATT']], ['Équipier / endurant', ['STA', 'RES', 'REC']]];
+  const roleFit = ROLEDEF.map(([l, ks]) => { const s = ks.reduce((a, k) => a + (A[k] || 50), 0) / ks.length; return [l, s, Math.max(1, Math.min(5, Math.round((s - 50) / 7)))]; }).sort((a, b) => b[1] - a[1]);
   const card = (title, body) => `<div class="scard"><h5>${title}</h5>${body}</div>`;
   const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
 
@@ -113,16 +116,21 @@ async function renderRider(c) {
       <div class="rbox"><div class="muted">Niveau actuel</div>${levelStars(r, kn, own, fq)}<div class="muted">Potentiel</div>${potStars(r, kn, own, fq)}</div>
       ${obsBox}
     </div>
-    <div class="rcols">
-      ${ATTR_BLOCKS.map(([title, list]) => `<div class="panel"><h4>${title}</h4>${list.map(row).join('')}</div>`).join('')}
-      <div class="panel"><h4>Infos</h4>
-        <div class="stat-row"><span>Expérience<small>Capitaine de route, gestion du stress</small></span><b>${deep ? exp + ' / 20' : '?'}</b></div>
-        <div class="stat-row"><span>Réputation<small>${deep ? rep + ' sur 5' : ''}</small></span><b>${deep ? REPUTATIONS[rep - 1] : '?'}</b></div>
+    <div class="rmain">
+      <div class="rcell rroles"><div class="rhd"><span>Rôles</span><button type="button" class="cmpbtn" data-compare="${r.id}">Comparer</button></div>
+        ${roleFit.map(([l, , n], i) => `<div class="rrole ${i === 0 ? 'sel' : ''}"><span class="rd"></span><span class="stars5">${known ? '★'.repeat(n) + '☆'.repeat(5 - n) : '?'}</span><span>${l}</span></div>`).join('')}
+        <div class="muted" style="font-size:.7rem;margin-top:.5rem">Rôle le mieux adapté en haut, d'après les notes du coureur.</div></div>
+      <div class="rcell"><div class="rhd">${ATTR_BLOCKS[0][0]}</div>${ATTR_BLOCKS[0][1].map(row).join('')}</div>
+      <div class="rcell"><div class="rhd">${ATTR_BLOCKS[1][0]}</div>${ATTR_BLOCKS[1][1].map(row).join('')}
+        <div class="legend" style="margin-top:.6rem"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
+      <div class="rcell"><div class="rhd">Infos</div>
+        <div class="stat-row"><span>Expérience</span><b>${deep ? exp + ' / 20' : '?'}</b></div>
+        <div class="stat-row"><span>Réputation</span><b>${deep ? REPUTATIONS[rep - 1] : '?'}</b></div>
         <div class="stat-row"><span>Personnalité</span><b>${deep ? esc(traits.join(', ')) : '?'}</b></div>
         <div class="stat-row"><span>Spécialité</span><b>${SPEC_NAMES[r.spec]}</b></div>
-        ${langHTML}${riderRadarHTML(r)}<div class="legend"><span class="tr up">▲</span> progression <span class="tr flat">►</span> stable <span class="tr down">▼</span> déclin</div></div>
+        ${langHTML}</div>
+      <div class="rcell rradar"><div class="rhd">Profil du coureur</div>${radarSVG([{ r, color: '#facc15' }])}</div>
     </div>
-    <div class="scards">
       ${card("État d'esprit", known ? `<div class="mo ${moodCls} big">${mood}</div><div class="muted">Points positifs ${pos.length} · négatifs ${neg.length}</div><small>${pos.concat(neg).map(esc).join('<br>')}</small>` : hid)}
       ${card('Condition physique', known ? `<div class="big">${r.form}%</div><div class="meter"><i style="width:${r.form}%"></i></div><div class="muted">Fatigue ${r.fatigue || 0}% · risque de sur-entraînement : ${risk}</div>${r.injured ? `<div class="down">${esc(r.injury_type || 'Blessé')} jusqu'au ${fmtShort(r.injured_until)}</div>` : ''}` : hid)}
       ${card('Entraînement', known ? `<div><b>${FOCUS[r.spec]}</b></div><div class="muted">Note du staff</div><span class="bd green">${note} / 10</span>` : hid)}

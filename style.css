@@ -296,3 +296,5 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .rradar svg { max-width:270px !important; }
 .scards { grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); }
 @media (max-width:1350px) { .rmain { grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); } .rcell { border-bottom:1px solid var(--line); } }
+
+

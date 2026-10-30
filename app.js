@@ -277,6 +277,7 @@ async function renderTab() {
   if (tab === 'competitions') return renderLiveRaceDashboard(c);
   if (tab === 'stageimp') return renderStageImport(c);
   if (tab === 'racemgr') return renderRaceManager(c);
+  if (tab === 'calendar') return renderCalendar(c);
   if (tab === 'rider') return renderRider(c);
   if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);
@@ -1113,6 +1114,48 @@ async function openRiderCompare(id) {
 if (!window.cmpBound) {
   window.cmpBound = true;
   document.addEventListener('click', (e) => { const b = e.target.closest('[data-compare]'); if (b) openRiderCompare(b.dataset.compare); });
+}
+/* ===== CALENDRIER (PORTAIL → Calendrier) ===== */
+const CAL_ABBR = { 'Endurance fondamentale': 'Endu.', 'PMA / Bosses': 'PMA', 'Contre-la-montre': 'CLM', 'Sprint & train': 'Sprint', 'Musculation / Gainage': 'Muscu', 'Tactique de course': 'Tact.', Reconnaissance: 'Recon.', 'Récupération active': 'Récup.', 'Soins & physiothérapie': 'Soins', Repos: 'Repos' };
+async function renderCalendar(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game;
+  state.calMonth = state.calMonth || g.game_date.slice(0, 7) + '-01'; state.calTab = state.calTab || 'all';
+  const [rc, sch, en] = await Promise.all([
+    sb.from('races').select('id, name, date, status, profile_type, distance_km, tag, travel_km').order('date'),
+    sb.from('training_schedule').select('day, slots').eq('team_id', t.id),
+    sb.from('race_entries').select('race_id, status').eq('team_id', t.id),
+  ]);
+  const races = rc.data || [], locked = trnLocked(races), saved = Object.fromEntries((sch.data || []).map((x) => [x.day, x.slots])), entry = Object.fromEntries((en.data || []).map((e) => [e.race_id, e.status]));
+  const first = gd(state.calMonth), dim = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate(), lead = (first.getDay() + 6) % 7, weeks = Math.ceil((lead + dim) / 7), start = trnAdd(state.calMonth, -lead);
+  const days = [...Array(weeks * 7)].map((_, i) => trnAdd(start, i)), mkey = state.calMonth.slice(0, 7), tab = state.calTab;
+  const kindOf = (s, n) => (TRN_SLOTS[s][1].find((a) => a[0] === n) || [])[1] || 'none';
+  const trainHTML = (iso) => {
+    const L = locked[iso]; if (L && L.type === 'RACE') return '';
+    if (L) return `<div class="cal-tr trv" title="${esc(L.label)}">Voyage / Logistique</div>`;
+    const s = saved[iso], sl = s && s.some(Boolean) ? s : trnAuto(iso, races);
+    return `<div class="cal-tr ${s && s.some(Boolean) ? '' : 'auto'}" data-caltrn="${iso}"><span>Entraînement</span>${[0, 1, 2].map((i) => `<i class="cal-sl ${kindOf(i, sl[i])}" title="${esc(sl[i] || '-')}">${esc(CAL_ABBR[sl[i]] || (sl[i] || '-').slice(0, 5))}</i>`).join('')}</div>`;
+  };
+  const raceHTML = (iso) => races.filter((r) => r.date === iso).map((r) => {
+    const done = r.status === 'SIMULATED', lab = done ? 'Terminée' : entry[r.id] === 'VALIDATED' ? 'Équipe validée' : 'À composer';
+    return `<div class="cal-race ${done ? 'done' : ''}" data-calrace="${r.id}"><b>${esc(r.name)}</b><small>${PROFILES[r.profile_type] || ''} ${r.distance_km || '?'} km${r.tag ? ' · ' + esc(r.tag) : ''}</small><small>${lab}</small></div>`;
+  }).join('');
+  const cell = (iso) => {
+    const d = gd(iso), cls = [iso.slice(0, 7) !== mkey ? 'out' : '', iso === g.game_date ? 'today' : '', iso < g.game_date ? 'past' : ''].join(' ');
+    return `<div class="cal-d ${cls}"><div class="cal-n">${d.getDate()}${d.getDate() === 1 ? ' ' + d.toLocaleDateString('fr-FR', { month: 'short' }) : ''}</div>${tab !== 'races' ? trainHTML(iso) : ''}${tab !== 'training' ? raceHTML(iso) : ''}</div>`;
+  };
+  const nbr = races.filter((r) => r.date.slice(0, 7) === mkey).length;
+  c.innerHTML = `<div class="sq-bar"><div class="sq-ctl">${[['all', 'Général'], ['training', 'Entraînement'], ['races', 'Courses']].map(([k, l]) => `<button data-calt="${k}" class="${tab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="sq-ctl" style="align-items:center"><button data-calm="-1">&lt;</button><b style="text-transform:capitalize;min-width:150px;text-align:center">${first.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</b><button data-calm="1">&gt;</button><button data-calm="0">Aujourd'hui</button></div></div>
+    <div class="cal-grid">${['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'].map((n) => `<div class="cal-h">${n}</div>`).join('')}${days.map(cell).join('')}</div>
+    <div class="muted" style="margin-top:.5rem">${nbr} course(s) ce mois-ci · cliquez sur une course pour ouvrir la simulation, sur un entraînement pour modifier la semaine. Entraînements en italique : planning automatique du directeur sportif.</div>`;
+  c.onclick = (e) => {
+    const m = e.target.closest('[data-calm]'), tb = e.target.closest('[data-calt]'), r = e.target.closest('[data-calrace]'), tr = e.target.closest('[data-caltrn]');
+    if (m) { if (m.dataset.calm === '0') state.calMonth = g.game_date.slice(0, 7) + '-01'; else { const d = gd(state.calMonth); d.setMonth(d.getMonth() + +m.dataset.calm); state.calMonth = d.toISOString().slice(0, 7) + '-01'; } renderCalendar(c); }
+    else if (tb) { state.calTab = tb.dataset.calt; renderCalendar(c); }
+    else if (r) { state.simRace = r.dataset.calrace; go('portal', 'competitions'); }
+    else if (tr) { state.trnWeek = trnMonday(tr.dataset.caltrn); go('training', 'overview'); }
+  };
 }
 // ---------- Démarrage ----------
 (async function boot() {

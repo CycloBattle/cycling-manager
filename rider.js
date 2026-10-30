@@ -132,10 +132,10 @@ async function renderRider(c) {
       <div class="rcell rradar"><div class="rhd">Profil du coureur</div>${radarSVG([{ r, color: '#facc15' }])}</div>
     </div>
     <div class="rcards" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:.75rem;align-items:stretch;margin-top:.75rem">
-      ${card("État d'esprit", known ? ...
-      ${card('Condition physique', ...
-      ${card('Entraînement', ...
-      ${card('Stats de la saison', ...
+      ${card("État d'esprit", known ? `<div class="mo ${moodCls} big">${mood}</div><div class="muted">Points positifs ${pos.length} · négatifs ${neg.length}</div><small>${pos.concat(neg).map(esc).join('<br>')}</small>` : hid)}
+      ${card('Condition physique', known ? `<div class="big">${r.form}%</div><div class="meter"><i style="width:${r.form}%"></i></div><div class="muted">Fatigue ${r.fatigue || 0}% · risque de sur-entraînement : ${risk}</div>${r.injured ? `<div class="down">${esc(r.injury_type || 'Blessé')} jusqu'au ${fmtShort(r.injured_until)}</div>` : ''}` : hid)}
+      ${card('Entraînement', known ? `<div><b>${FOCUS[r.spec]}</b></div><div class="muted">Note du staff</div><span class="bd green">${note} / 10</span>` : hid)}
+      ${card('Stats de la saison', `<table class="fm"><tr><th>Jours de course</th><th>Victoires</th><th>Podiums</th><th>Pts UCI</th></tr><tr><td>${st.days}</td><td>${st.wins}</td><td>${st.pods}</td><td>${st.pts}</td></tr></table>`)}
     </div>`;
   const actBtn = $('actbtn'), actList = $('actlist');
   if (actBtn) {

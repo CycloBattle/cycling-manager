@@ -100,7 +100,7 @@ async function renderRider(c) {
   const row = ([code, label]) => `<div class="arow ${known && topK.includes(code) ? 'key' : ''}"><span><b>${code}</b> <span class="muted">${label}</span></span><span>${attrCell(code)}</span></div>`;
   const ROLEDEF = [['Grimpeur', ['MTN', 'MM', 'STA']], ['Puncheur', ['HIL', 'ATT', 'ACC']], ['Rouleur / chrono', ['TTR', 'PRL', 'FLA']], ['Sprinteur', ['SPR', 'ACC', 'FLA']], ['Classiques / pavés', ['COB', 'FLA', 'ATT']], ['Équipier / endurant', ['STA', 'RES', 'REC']]];
   const roleFit = ROLEDEF.map(([l, ks]) => { const s = ks.reduce((a, k) => a + (A[k] || 50), 0) / ks.length; return [l, s, Math.max(1, Math.min(5, Math.round((s - 50) / 7)))]; }).sort((a, b) => b[1] - a[1]);
-  const card = (title, body) => `<div class="scard"><h5>${title}</h5>${body}</div>`;
+  const card = (title, body) => `<div class="rcard" style="${title === 'Stats de la saison' ? 'grid-column:span 2;' : ''}min-width:0"><h5>${title}</h5>${body}</div>`;
   const langHTML = mineIds.includes(r0.team_id) ? (await ensureStaffCtx(), riderLangHTML(r0)) : `<div class="stat-row"><span>Langues parlées</span><b>${known ? esc(siLangs(r0).map(siLabel).join(', ')) : '?'}</b></div>`;
 
   c.innerHTML = `

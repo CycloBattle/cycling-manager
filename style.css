@@ -313,3 +313,18 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .rcard table { width:100%; }
 @media (max-width:1250px) { .rcards { grid-template-columns:repeat(2,minmax(0,1fr)) !important; } .rcards > .rcard { grid-column:auto !important; } }
 @media (max-width:650px) { .rcards { grid-template-columns:1fr !important; } }
+
+.cal-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
+.cal-h { text-align:center; font-weight:700; font-size:.78rem; color:#d1d5db; padding:.3rem 0; }
+.cal-d { background:#0b1020cc; border:1px solid var(--line); border-radius:6px; min-height:112px; padding:.35rem .4rem; display:flex; flex-direction:column; gap:.3rem; min-width:0; }
+.cal-d.out { opacity:.35; } .cal-d.past { background:#0b102088; } .cal-d.today { border-color:#f472b6; box-shadow:0 0 0 1px #f472b6 inset; }
+.cal-n { font-weight:700; font-size:.85rem; } .cal-d.today .cal-n { color:#f9a8d4; }
+.cal-tr { display:flex; align-items:center; gap:.2rem; flex-wrap:wrap; background:#1f2937; border-radius:4px; padding:.2rem .3rem; font-size:.66rem; color:var(--muted); cursor:pointer; }
+.cal-tr.auto { font-style:italic; opacity:.75; } .cal-tr:hover { background:#374151; }
+.cal-tr.trv { background:repeating-linear-gradient(45deg,#1f2937,#1f2937 8px,#111827 8px,#111827 16px); border:1px dashed #4b5563; cursor:default; }
+.cal-sl { font-style:normal; font-size:.62rem; font-weight:700; padding:.05rem .3rem; border-radius:3px; background:#374151; color:#fff; }
+.cal-sl.build { background:#166534; } .cal-sl.hard { background:#c2410c; } .cal-sl.tact { background:#2563eb; } .cal-sl.rec { background:#6d28d9; } .cal-sl.rest { background:#4b5563; }
+.cal-race { background:linear-gradient(90deg,#6d28d9,#9d174d); border-radius:5px; padding:.3rem .4rem; cursor:pointer; line-height:1.25; }
+.cal-race b { display:block; font-size:.78rem; } .cal-race small { display:block; font-size:.65rem; color:#e9d5ff; }
+.cal-race.done { background:#374151; } .cal-race.done small { color:var(--muted); } .cal-race:hover { filter:brightness(1.15); }
+@media (max-width:900px) { .cal-grid { grid-template-columns:repeat(7,minmax(105px,1fr)); overflow-x:auto; } }

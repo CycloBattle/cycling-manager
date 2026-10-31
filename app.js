@@ -203,8 +203,7 @@ const MENUS = {
   portal: { label: 'PORTAIL', subs: [['overview', "Vue d'ensemble"], ['messages', 'Messages'], ['calendar', 'Calendrier'], ['info', 'Infos'], ['data', 'Centre des données'], ['competitions', 'Compétitions'], ['career', 'Carrière']] },
   squad: { label: 'EFFECTIF', subs: [['squad', "Vue d'ensemble"], ['squad_pro', 'Équipe Pro'], ['squad_u23', 'Équipe Développement (U23)'], ['group', 'Dynamique de groupe'], ['health', 'Santé & Blessures'], ['trainrep', "Rapports d'entraînement"]] },
   recruit: { label: 'RECRUTEMENT', subs: [['overview', "Vue d'ensemble"], ['search', 'Base de données cyclistes'], ['recs', 'Recommandations'], ['missions', 'Recherches ciblées'], ['market', 'Marché des transferts & accords'], ['watch', 'Liste de sélection']] },  training: { label: 'ENTRAÎNEMENT', subs: [['overview', "Vue d'ensemble"], ['individual', 'Entraînement individuel'], ['intensity', 'Intensité & Repos'], ['assignments', 'Affectation du staff']] },
-  finance: { label: 'SPONSORS & FINANCES', subs: [['contracts', 'Sponsors & Finances']] },
-  club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['staff_db', 'Base de données staff'], ['ranking', 'Classement UCI']] },};
+    club: { label: 'CLUB', subs: [['overview', "Vue d'ensemble"], ['infra', 'Infrastructures'], ['staff_overview', 'Staff'], ['staff_db', 'Base de données staff'], ['finance', 'Finance'], ['ranking', 'Classement UCI']] },};
 const gd = (iso) => new Date(iso + 'T12:00:00');
 const fmtShort = (iso) => { const d = gd(iso); return `${d.getDate()}/${d.getMonth() + 1}/${String(d.getFullYear()).slice(2)}`; };
 const store = {
@@ -258,7 +257,7 @@ function viewGame() {
         </div>
       </div>
       <div class="fm-row2">
-        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab || (k === 'staff_overview' && state.tab.startsWith('staff_') && state.tab !== 'staff_db') ? 'on' : ''}">${l}</button>`).join('')}</nav>
+        <nav class="fm-sub">${subs.map(([k, l]) => `<button data-sub="${k}" class="${k === state.tab || (k === 'staff_overview' && state.tab.startsWith('staff_') && state.tab !== 'staff_db') || (k === 'finance' && state.tab === 'contracts') ? 'on' : ''}">${l}</button>`).join('')}</nav>
         <nav class="fm-quick">${quick.map(([k, l]) => `<button data-go="${k}">${l}</button>`).join('')}</nav>
       </div>
     </header>
@@ -293,7 +292,7 @@ async function renderTab() {
   if (tab === 'overview' && state.menu === 'club') return renderClubOverview(c);
   if (tab === 'overview' && state.menu === 'recruit') return renderRecruitOverview(c);   // 'overview' existe aussi dans PORTAIL
   if (tab === 'portal' || tab === 'overview') return renderPortal(c);
-  if (tab === 'contracts') return renderSponsors(c);
+  if (tab === 'finance') return renderFinance(c);
   if (tab === 'ranking') {
     const { data } = await sb.from('teams').select('name, official_name, nationality, uci_points').order('uci_points', { ascending: false });
     c.innerHTML = `<div class="panel"><h4>Classement UCI par équipes</h4><table class="fm">${(data || []).map((x, i) =>
@@ -455,7 +454,7 @@ async function renderClubOverview(c) {
     <div class="panel"><h4>Staff</h4>${sRows.map(([l, n, max]) => `<div class="stat-row"><div>${l}<small>${n >= max ? 'Complet' : max - n + ' poste(s) vacant(s)'}</small></div><b>${n} / ${max}</b></div>`).join('')}
       ${kv('Coût du staff / mois', fmtEUR(staffCost))}<div class="rov-btns"><button data-cgo="club|staff_scouting">Staff de recrutement</button></div></div>
     <div class="panel"><h4>Sponsors</h4>${(sp.data || []).map((x) => `<div class="stat-row"><span>${esc(x.sponsors_catalog?.name || 'Sponsor')}</span><b>${fmtEUR(x.monthly_payout)} / mois</b></div>`).join('') || '<p class="muted">Aucun sponsor signé.</p>'}
-      <div class="rov-btns"><button data-cgo="finance|contracts">Sponsors & Finances</button></div></div>
+      <div class="rov-btns"><button data-cgo="club|finance">Sponsors & Finances</button></div></div>
     <div class="panel"><h4>Infrastructures</h4>${INF.map(([k, l]) => `<div class="stat-row"><span>${l}</span><span class="bd ${lvl(k) ? 'green' : 'spec'}">${lvl(k) ? 'Niv. ' + lvl(k) + ' / 5' : 'Non construit'}</span></div>`).join('')}
       <div class="stat-row"><span>Centre de formation jeune</span><span class="bd ${dv ? 'green' : 'spec'}">${dv ? 'Équipe U23 liée' : 'Aucun'}</span></div></div>
     <div class="panel"><h4>Historique des transferts</h4>${kv('Arrivées', `${arr.length} · ${fmtEUR(sum(arr, 'offer_amount'))}`)}${kv('Départs', `${dep.length} · ${fmtEUR(sum(dep, 'offer_amount'))}`)}
@@ -1156,6 +1155,52 @@ async function renderCalendar(c) {
     else if (r) { state.simRace = r.dataset.calrace; go('portal', 'competitions'); }
     else if (tr) { state.trnWeek = trnMonday(tr.dataset.caltrn); go('training', 'overview'); }
   };
+}
+/* ===== CLUB → Finance ===== */
+async function renderFinance(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game, ids = myTeamIds(), mk = g.game_date.slice(0, 7);
+  const [sp, rs, st, sc, inf, rc] = await Promise.all([
+    sb.from('team_sponsors').select('monthly_payout, sponsors_catalog(name)').eq('team_id', t.id),
+    sb.from('riders').select('contract_salary, team_id').in('team_id', ids),
+    sb.from('staff').select('monthly_salary').eq('team_id', t.id),
+    sb.from('scouts').select('monthly_salary').eq('team_id', t.id),
+    sb.from('team_infrastructures').select('maintenance_cost').eq('team_id', t.id),
+    sb.from('races').select('id').gte('date', mk + '-01').lte('date', mk + '-31'),
+  ]);
+  const sum = (a, k) => (a || []).reduce((s, x) => s + Number(x[k] || 0), 0), riders = rs.data || [];
+  const proPay = sum(riders.filter((r) => r.team_id === t.id), 'contract_salary'), devPay = sum(riders.filter((r) => r.team_id !== t.id), 'contract_salary');
+  const staffPay = sum(st.data, 'monthly_salary'), scoutPay = sum(sc.data, 'monthly_salary'), income = sum(sp.data, 'monthly_payout'), nRaces = (rc.data || []).length;
+  const lines = [['Salaires : équipe pro', proPay, '#7c3aed'], ['Salaires : équipe de développement', devPay, '#38bdf8'], ['Staff', staffPay, '#f59e0b'], ['Recruteurs', scoutPay, '#22c55e'],
+    ['Maintenance des infrastructures', sum(inf.data, 'maintenance_cost'), '#f472b6'], [`Frais de courses (${nRaces} ce mois-ci, 4 500 € chacune)`, nRaces * 4500, '#ef4444']];
+  const expenses = lines.reduce((s, l) => s + l[1], 0), net = income - expenses, budget = Number(t.budget || 0), salaries = proPay + devPay + staffPay + scoutPay;
+  let acc = 0; const stops = lines.filter((l) => l[1] > 0).map((l) => { const a = (acc / expenses) * 100; acc += l[1]; return `${l[2]} ${a.toFixed(2)}% ${((acc / expenses) * 100).toFixed(2)}%`; });
+  const pie = expenses > 0 ? `conic-gradient(${stops.join(',')})` : 'conic-gradient(#374151 0 100%)';
+  const runway = net < 0 && budget > 0 ? budget / -net : null, pct = income ? Math.min(100, Math.round((salaries / income) * 100)) : 100, cls = (v) => (v >= 0 ? 'up' : 'down');
+  const sy = g.season_year, season = (n) => `${sy + n}/${String(sy + n + 1).slice(2)}`;
+  const card = (title, body) => `<div class="fin-card"><h5>${title}</h5>${body}</div>`, kv = (l, v, k = '') => `<div class="stat-row"><span>${l}</span><b class="${k}">${v}</b></div>`;
+  c.innerHTML = `<div class="fin-main">
+      <div class="fin-pie" style="background:${pie}"></div>
+      <div class="fin-figs">
+        <div class="muted">Solde général</div><div class="big ${cls(budget)}" style="font-size:1.8rem">${fmtEUR(budget)}</div>
+        <div class="muted" style="margin-top:.8rem">Solde mensuel (revenus − dépenses)</div><div class="big ${cls(net)}">${fmtEUR(net)}</div>
+        <div class="muted" style="margin-top:.8rem">Dette nette</div><div class="big">${budget < 0 ? fmtEUR(-budget) : '0 €'}</div>
+        <div class="muted" style="margin-top:.8rem">${runway ? `Trésorerie suffisante pour ${runway.toFixed(1)} mois au rythme actuel` : net >= 0 ? 'Budget mensuel à l\'équilibre' : 'Trésorerie épuisée'}</div>
+        <div class="rov-btns"><button data-fgo="1">Sponsors, contrats et projection</button></div></div>
+      <div class="tbl fin-tbl"><table class="fm"><thead><tr><th></th><th>Type de dépense</th><th>Montant mensuel</th><th>Part</th><th>Sur 12 mois</th></tr></thead><tbody>
+        ${lines.map(([l, v, col]) => `<tr><td><span class="re-dot" style="background:${col}"></span></td><td>${l}</td><td>${fmtEUR(v)}</td><td>${expenses ? Math.round((v / expenses) * 100) : 0} %</td><td>${fmtEUR(v * 12)}</td></tr>`).join('')}
+        <tr><td></td><td><b>Total des dépenses</b></td><td><b>${fmtEUR(expenses)}</b></td><td>100 %</td><td><b>${fmtEUR(expenses * 12)}</b></td></tr>
+        <tr><td></td><td><b>Revenus des sponsors</b></td><td><b class="up">${fmtEUR(income)}</b></td><td></td><td><b class="up">${fmtEUR(income * 12)}</b></td></tr></tbody></table></div></div>
+    <div class="fin-cards">
+      ${card('Finances', `<div class="muted">Solde général</div><div class="big" style="color:#c084fc">${fmtEUR(budget)}</div>${kv('Revenus', fmtEUR(income), 'up')}${kv('Dépenses', fmtEUR(expenses), 'down')}`)}
+      ${card('Revenus', `<div class="big">${fmtEUR(income)}</div><div class="muted">Par mois (sponsors)</div>${kv('Chiffre d\'affaires annuel', fmtEUR(income * 12))}${kv('Sponsors signés', (sp.data || []).length)}`)}
+      ${card('Dépenses', `<div class="big">${fmtEUR(expenses)}</div><div class="muted">Par mois</div>${kv('Course(s) ce mois-ci', nRaces)}${kv('Maintenance', fmtEUR(lines[4][1]))}`)}
+      ${card('Salaires', `<div class="big">${fmtEUR(salaries)}</div><div class="muted">Masse salariale mensuelle / revenus : ${income ? pct + ' %' : 'aucun revenu'}</div><div class="meter"><i style="width:${pct}%"></i></div>${kv('Coureurs', fmtEUR(proPay + devPay))}${kv('Staff et recruteurs', fmtEUR(staffPay + scoutPay))}`)}
+      ${card('Projections', `<div class="fin-proj"><span>Saison ${season(0)}</span><span>Solde</span><span>Chiffre d'affaires</span>
+        <b>Dans 12 mois</b><b class="${cls(budget + 12 * net)}">${fmtEUR(Math.round(budget + 12 * net))}</b><b>${fmtEUR(income * 12)}</b>
+        <b>Dans 24 mois</b><b class="${cls(budget + 24 * net)}">${fmtEUR(Math.round(budget + 24 * net))}</b><b>${fmtEUR(income * 24)}</b></div>`)}
+    </div>`;
+  c.onclick = (e) => { if (e.target.closest('[data-fgo]')) go('club', 'contracts'); };
 }
 // ---------- Démarrage ----------
 (async function boot() {

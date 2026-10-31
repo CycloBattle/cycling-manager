@@ -328,3 +328,13 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .cal-race b { display:block; font-size:.78rem; } .cal-race small { display:block; font-size:.65rem; color:#e9d5ff; }
 .cal-race.done { background:#374151; } .cal-race.done small { color:var(--muted); } .cal-race:hover { filter:brightness(1.15); }
 @media (max-width:900px) { .cal-grid { grid-template-columns:repeat(7,minmax(105px,1fr)); overflow-x:auto; } }
+
+.fin-main { display:grid; grid-template-columns:230px minmax(240px,320px) minmax(0,1fr); gap:1.5rem; align-items:center; background:#0b1020cc; border:1px solid var(--line); border-radius:10px; padding:1.5rem; margin-bottom:.75rem; }
+.fin-pie { width:210px; height:210px; border-radius:50%; margin:auto; box-shadow:0 0 0 6px #0b1020; }
+.fin-tbl { max-height:none; } .fin-tbl table { font-size:.85rem; }
+.fin-cards { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.75rem; }
+.fin-card { background:#0b1020cc; border:1px solid var(--line); border-radius:10px; padding:.7rem .9rem; min-width:0; }
+.fin-card h5 { margin:0 0 .5rem; font-size:.7rem; letter-spacing:.05em; text-transform:uppercase; color:var(--muted); }
+.fin-proj { display:grid; grid-template-columns:1.1fr 1fr 1fr; gap:.3rem .5rem; font-size:.8rem; } .fin-proj span { color:var(--muted); font-size:.7rem; }
+@media (max-width:1250px) { .fin-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } .fin-main { grid-template-columns:1fr; } }
+@media (max-width:650px) { .fin-cards { grid-template-columns:1fr; } }

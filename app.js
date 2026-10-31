@@ -277,6 +277,7 @@ async function renderTab() {
   if (tab === 'stageimp') return renderStageImport(c);
   if (tab === 'racemgr') return renderRaceManager(c);
   if (tab === 'calendar') return renderCalendar(c);
+  if (tab === 'info') return renderNews(c);
   if (tab === 'rider') return renderRider(c);
   if (tab === 'messages') return renderMessagesView(c);
   if (tab === 'admin') return renderAdmin(c);
@@ -1201,6 +1202,69 @@ async function renderFinance(c) {
         <b>Dans 24 mois</b><b class="${cls(budget + 24 * net)}">${fmtEUR(Math.round(budget + 24 * net))}</b><b>${fmtEUR(income * 24)}</b></div>`)}
     </div>`;
   c.onclick = (e) => { if (e.target.closest('[data-fgo]')) go('club', 'contracts'); };
+}
+/* ===== PORTAIL → Infos : accueil des actualités ===== */
+async function renderNews(c) {
+  c.innerHTML = '<p class="muted pad">Chargement…</p>';
+  const t = state.team, g = state.game, ids = myTeamIds(), today = g.game_date;
+  const [rc, tm, ai, ob, of, my] = await Promise.all([
+    sb.from('races').select('id, name, date, status, profile_type, distance_km').order('date'),
+    sb.from('teams').select('id, name, official_name, uci_points').order('uci_points', { ascending: false }),
+    sb.from('ai_clubs').select('id, name'),
+    sb.from('rider_observations').select('*, riders(id, first_name, last_name, age, team_id)').limit(60),
+    sb.from('transfer_offers').select('*, riders(id, first_name, last_name, age)').order('updated_at', { ascending: false }).limit(60),
+    sb.from('riders').select('id, first_name, last_name, team_id, injured_until, injury_type, fatigue').in('team_id', ids),
+  ]);
+  const races = rc.data || [], teams = tm.data || [], tn = Object.fromEntries(teams.map((x) => [x.id, x.official_name || x.name])), club = { ...Object.fromEntries((ai.data || []).map((x) => [x.id, x.name])), ...tn };
+  const recent = races.filter((r) => r.status === 'SIMULATED').slice(-12).reverse(), rids = recent.map((r) => r.id);
+  const [rs, sm] = rids.length ? await Promise.all([
+    sb.from('race_results').select('position, uci_points, prize_money, race_id, riders(id, first_name, last_name, team_id)').in('race_id', rids).lte('position', 10).limit(800),
+    sb.from('race_summaries').select('race_id, summary_text').in('race_id', rids),
+  ]) : [{ data: [] }, { data: [] }];
+  const byRace = {}; (rs.data || []).forEach((x) => (byRace[x.race_id] = byRace[x.race_id] || []).push(x));
+  const sumBy = Object.fromEntries((sm.data || []).map((x) => [x.race_id, (x.summary_text || '').split('\n').filter(Boolean)]));
+  const nm = (x) => (x.riders ? `${x.riders.first_name} ${x.riders.last_name}` : 'Un coureur'), nth = (n) => `${n}${n === 1 ? 'er' : 'e'}`;
+  const ago = (iso) => { if (!iso) return ''; const d = daysUntil(String(iso).slice(0, 10)); return d === 0 ? "Aujourd'hui" : d === -1 ? 'Hier' : d < 0 ? `Il y a ${-d} j.` : `Dans ${d} j.`; };
+
+  const mine = [], world = [], rumors = [], signed = [];
+  recent.forEach((race) => {
+    const list = (byRace[race.id] || []).sort((a, b) => a.position - b.position), win = list[0], txt = sumBy[race.id] || [];
+    if (win) world.push({ title: `${nm(win)} remporte ${race.name}`, text: txt.slice(1, 3).join(' ') || `Victoire de ${tn[win.riders?.team_id] || 'son équipe'}.`, tag: 'Compétition', date: race.date, race: race.id, badge: '1er' });
+    const best = list.find((x) => x.riders && ids.includes(x.riders.team_id));
+    if (best) mine.push({ title: `${race.name} : ${nth(best.position)} place pour ${nm(best)}`, text: `${best.uci_points || 0} pts UCI · prime ${fmtEUR(best.prize_money || 0)}`, tag: 'Résultat', date: race.date, rider: best.riders.id, badge: nth(best.position) });
+  });
+  (my.data || []).forEach((r) => {
+    if (r.injured_until && r.injured_until > today) mine.push({ title: `Blessure : ${r.first_name} ${r.last_name}`, text: `${r.injury_type || 'Blessure'}, retour prévu le ${fmtShort(r.injured_until)}.`, tag: 'Blessure', date: today, rider: r.id, badge: '+', cls: 'bad' });
+    else if (r.fatigue > 70) mine.push({ title: `Fatigue élevée : ${r.first_name} ${r.last_name}`, text: `Fatigue à ${r.fatigue} % : prévoyez du repos avant la prochaine course.`, tag: 'Forme', date: today, rider: r.id, badge: '!' });
+  });
+  const nxt = races.find((r) => r.status === 'SCHEDULED' && r.date >= today);
+  if (nxt) mine.push({ title: `Prochaine épreuve : ${nxt.name}`, text: `${PROFILES[nxt.profile_type] || ''} ${nxt.distance_km || '?'} km, ${ago(nxt.date).toLowerCase()}.`, tag: 'Calendrier', date: nxt.date, race: nxt.id, badge: 'GO' });
+  const lead = teams[0]; if (lead && lead.uci_points > 0) world.push({ title: `Classement UCI : ${tn[lead.id]} en tête`, text: `${lead.uci_points} points. Votre équipe : ${teams.findIndex((x) => x.id === t.id) + 1}e sur ${teams.length}.`, tag: 'Classement', date: today, badge: 'UCI' });
+  if (!mine.length) mine.push({ title: `Bienvenue à la tête de ${t.official_name || t.name}`, text: 'Signez vos sponsors, composez votre équipe et visez le haut du classement UCI.', tag: 'Direction', date: today, badge: '★' });
+
+  const ST = { PENDING_CLUB: 'en attente de la réponse du club', CLUB_ACCEPTED: 'accord du club obtenu', NEGOTIATING_CONTRACT: 'négociation du contrat en cours', CONTRACT_ACCEPTED: 'accord final : à officialiser' };
+  (of.data || []).forEach((o) => {
+    const rn = o.riders ? `${o.riders.first_name} ${o.riders.last_name}` : 'un coureur';
+    if (o.status === 'OFFICIALIZED') signed.push({ title: `${rn} signe à ${tn[o.from_team_id] || 'un nouveau club'}`, text: `Indemnité ${fmtEUR(o.offer_amount || 0)}, salaire ${fmtEUR(o.offered_monthly_salary || 0)} / mois, ${o.contract_years || 1} an(s)${o.to_team_id ? ' · depuis ' + (tn[o.to_team_id] || 'un autre club') : ''}.`, tag: 'Officialisé', rider: o.riders?.id, badge: '✔', cls: o.from_team_id === t.id ? 'mine' : '' });
+    else if (o.from_team_id === t.id && ST[o.status]) rumors.push({ title: `Votre offre pour ${rn}`, text: `Statut : ${ST[o.status]}.`, tag: 'Offre', rider: o.riders?.id, badge: '€', cls: 'mine' });
+  });
+  (ob.data || []).filter((o) => o.observer_team_id !== t.id && o.riders).forEach((o) => {
+    const who = club[o.observer_ai_id || o.observer_team_id] || 'Un club', rn = `${o.riders.first_name} ${o.riders.last_name}`, own = ids.includes(o.riders.team_id);
+    rumors.push({ title: own ? `${who} convoite ${rn}` : `${who} s'intéresse à ${rn}`, text: own ? 'Un de vos coureurs attire l\'attention : sa situation contractuelle peut devenir un sujet.' : `${rn}, ${o.riders.age} ans (${tn[o.riders.team_id] || 'libre'}), est suivi de près par ${who}.`, tag: 'Rumeur', rider: o.riders.id, badge: '?', cls: own ? 'mine' : '' });
+  });
+  const byDate = (a, b) => String(b.date || '').localeCompare(String(a.date || ''));
+  mine.sort(byDate); world.sort(byDate);
+
+  const attr = (f) => (f.rider ? `data-rider="${f.rider}"` : f.race ? `data-newsrace="${f.race}"` : ''), meta = (f) => `${f.date ? ago(f.date) + ' · ' : ''}${esc(f.tag)}`;
+  const feat = (f) => `<div class="nws-feat ${f.cls || ''}" ${attr(f)}><div class="nws-img"><span>${esc(f.badge || '')}</span></div><b>${esc(f.title)}</b><p>${esc(f.text)}</p><small>${meta(f)}</small></div>`;
+  const row = (f) => `<div class="nws-row ${f.cls || ''}" ${attr(f)}><span class="nws-b">${esc(f.badge || '')}</span><div><b>${esc(f.title)}</b><small>${meta(f)}</small></div></div>`;
+  const col = (title, items, empty) => `<div class="nws-col"><div class="nws-h">${title}</div>${items[0] ? feat(items[0]) : `<p class="muted">${empty}</p>`}${items.length > 1 ? `<div class="nws-more">Plus d'articles</div>${items.slice(1, 9).map(row).join('')}` : ''}</div>`;
+  const aff = races.filter((r) => r.date >= today && r.status !== 'SIMULATED').slice(0, 8);
+  c.innerHTML = `<div class="nws-wrap"><div class="nws-title">Accueil des actualités</div>
+    <div class="nws-sub">Principales affiches à venir</div>
+    <div class="nws-top">${aff.map((r) => `<div class="nws-aff" data-newsrace="${r.id}"><small>${r.date === today ? "Aujourd'hui" : fmtShort(r.date)}</small><b>${esc(r.name)}</b><span>${PROFILES[r.profile_type] || ''} ${r.distance_km || '?'} km</span></div>`).join('') || '<span class="muted">Aucune course à venir.</span>'}</div>
+    <div class="nws-grid">${col('Pour vous', mine, 'Rien à signaler.')}${col('Dans le monde', world, 'Aucune course terminée pour le moment.')}${col('Rumeurs de transfert', rumors, 'Aucune rumeur : observez des coureurs ou faites une offre.')}${col('Transferts officialisés', signed, 'Aucun transfert signé pour le moment.')}</div></div>`;
+  c.onclick = (e) => { const r = e.target.closest('[data-newsrace]'); if (r) { state.simRace = r.dataset.newsrace; go('portal', 'competitions'); } };
 }
 // ---------- Démarrage ----------
 (async function boot() {

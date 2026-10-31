@@ -241,7 +241,7 @@ async function continueGame() {
 
 function viewGame() {
   const t = state.team, g = state.game, d = gd(g.game_date);
-  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes'], ['racemgr', 'Admin : courses & tags']);
+  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes'], ['racemgr', 'Admin : courses & tags'], ['riderimp', 'Admin : import coureurs']);
   const quick = [['portal|messages', 'Messages'], ['squad|squad', 'Équipe première'], ['recruit|search', 'Base de données cyclistes'], ['recruit|market', 'Marché des transferts'], ['portal|competitions', 'Compétitions']];
   const nr = state.nextRace, n = nr ? daysUntil(nr.date) : null;
   $app.innerHTML = `
@@ -275,6 +275,7 @@ async function renderTab() {
   const c = $('content'), tab = state.tab;
   if (tab === 'competitions') return renderLiveRaceDashboard(c);
   if (tab === 'stageimp') return renderStageImport(c);
+  if (tab === 'riderimp') return renderRiderImport(c);
   if (tab === 'racemgr') return renderRaceManager(c);
   if (tab === 'calendar') return renderCalendar(c);
   if (tab === 'info') return renderNews(c);
@@ -988,6 +989,7 @@ async function applyTrainingEffects(daysPassed = 1, startIso = state.game.game_d
     sb.from('training_settings').select('*').in('team_id', pids), sb.from('individual_training').select('*').in('team_id', pids), sb.from('races').select('*').order('date'),
   ]);
   if (rs.error || sc.error) throw new Error((rs.error || sc.error).message);
+  TE_LIM = await riLoadLimits();   // limites cachées (lisibles par l'admin uniquement)
   const races = rc.data || [], locked = trnLocked(races), ownerOf = (id) => (pids.includes(id) ? id : (kids || []).find((k) => k.id === id)?.parent_team_id), T = {};
   for (const id of pids) {
     const members = (st.data || []).filter((x) => x.team_id === id).map((x) => { const role = STAFF_ALIAS[x.role] || x.role; return { key: 'staff:' + x.id, role, A: staffAttrs(x, role) }; });
@@ -1024,13 +1026,22 @@ async function applyTrainingEffects(daysPassed = 1, startIso = state.game.game_d
       if (!injured) {
         const w = {}; (IT_ATTRS[plan.focus] || []).forEach((a) => (w[a] = (w[a] || 0) + 1));
         if (!locked[iso]) slotsOf(T0, iso).forEach((ex) => (TE_EX_ATTRS[ex] || []).forEach((a) => (w[a] = (w[a] || 0) + 0.5)));
-        const ageF = r.age <= 22 ? 1 : r.age <= 26 ? 0.6 : r.age <= 30 ? 0.3 : 0.05, loadF = W < 40 ? 0.2 : W < 50 ? 0.6 : W <= 80 ? 1 : W <= 85 ? 1.15 : 1.4;
-        const k = 0.012 * ageF * loadF * imp.progressMult * (1 + bonus * 0.3), cap = r.potential != null ? Math.min(85, Math.round(62 + Number(r.potential) * 4.6)) : 80, prog = { ...(r.training_progress || {}) };
+        const lim = TE_LIM[r.id] || null, age = r.age;
+        const ageF = age <= 20 ? 1.25 : age <= 22 ? 1 : age <= 25 ? 0.7 : age <= 28 ? 0.4 : age <= 31 ? 0.15 : 0.03, loadF = W < 40 ? 0.2 : W < 50 ? 0.6 : W <= 80 ? 1 : W <= 85 ? 1.15 : 1.4;
+        const potF = 0.7 + (r.potential != null ? Number(r.potential) / 6 : 0.6) * 0.6;   // potentiel visible (étoiles) : rythme de progression
+        const k = 0.012 * ageF * potF * loadF * imp.progressMult * (1 + bonus * 0.3), prog = { ...(r.training_progress || {}) };
         for (const [code, wt] of Object.entries(w)) {
           const col = code.toLowerCase(); if (r[col] == null) continue;
-          prog[col] = (prog[col] || 0) + k * wt;
+          const cap = lim && lim['lim_' + col] != null ? lim['lim_' + col] : (r.potential != null ? Math.min(85, Math.round(62 + Number(r.potential) * 4.6)) : 80), gap = cap - r[col];   // limite cachée de l'attribut
+          if (gap <= 0) { prog[col] = 0; continue; }
+          prog[col] = (prog[col] || 0) + k * wt * Math.max(0.12, Math.min(1, gap / 10));   // la progression ralentit à l'approche de la limite
           while (prog[col] >= 1 && r[col] < cap) { r[col] += 1; prog[col] -= 1; sum.gains++; }
-          if (r[col] >= cap) prog[col] = 0;
+        }
+        if (age >= 30) for (const col of TE_COLS) {   // déclin lié à l'âge : lent à 30 ans, net après 33 ans, plus marqué sur les notes physiques
+          if (r[col] == null) continue;
+          const phys = ['mtn', 'mm', 'hil', 'spr', 'acc', 'att', 'prl', 'ttr'].includes(col), rate = (phys ? 0.004 : 0.0015) * (age - 29) * (1 - bonus * 0.3) * (1 - Math.min(0.5, (r.recovery || 50) / 200));
+          prog[col] = (prog[col] || 0) - rate;
+          if (prog[col] <= -1 && r[col] > 40) { r[col] -= 1; prog[col] += 1; sum.drops = (sum.drops || 0) + 1; }
         }
         r.training_progress = prog;
         // 4. Risque de blessure (+25 % en sur-entraînement)
@@ -1265,6 +1276,122 @@ async function renderNews(c) {
     <div class="nws-top">${aff.map((r) => `<div class="nws-aff" data-newsrace="${r.id}"><small>${r.date === today ? "Aujourd'hui" : fmtShort(r.date)}</small><b>${esc(r.name)}</b><span>${PROFILES[r.profile_type] || ''} ${r.distance_km || '?'} km</span></div>`).join('') || '<span class="muted">Aucune course à venir.</span>'}</div>
     <div class="nws-grid">${col('Pour vous', mine, 'Rien à signaler.')}${col('Dans le monde', world, 'Aucune course terminée pour le moment.')}${col('Rumeurs de transfert', rumors, 'Aucune rumeur : observez des coureurs ou faites une offre.')}${col('Transferts officialisés', signed, 'Aucun transfert signé pour le moment.')}</div></div>`;
   c.onclick = (e) => { const r = e.target.closest('[data-newsrace]'); if (r) { state.simRace = r.dataset.newsrace; go('portal', 'competitions'); } };
+}
+/* ===== Admin : import des coureurs (notes + limites cachées) ===== */
+// Colonnes : Nom; Prénom; Équipe; Pays; Naissance; Potentiel; Profil; Taille; Poids; puis (note; limite) × 12 :
+// plaine, montagne, moyenne montagne, descente, pavés, contre-la-montre, prologue, sprint, accélération, endurance, résistance, récupération
+let TE_LIM = {};   // limites cachées chargées pour le moteur d'entraînement (admin uniquement)
+const RI_COLS = [['FLA', 'fla'], ['MTN', 'mtn'], ['MM', 'mm'], ['DHI', 'dhi'], ['COB', 'cob'], ['TTR', 'ttr'], ['PRL', 'prl'], ['SPR', 'spr'], ['ACC', 'acc'], ['STA', 'sta'], ['RES', 'res'], ['REC', 'rec']];
+const RI_N3 = { FRA: 'FR', BEL: 'BE', ITA: 'IT', ESP: 'ES', GER: 'DE', DEU: 'DE', NED: 'NL', NLD: 'NL', DEN: 'DK', DNK: 'DK', GBR: 'GB', SUI: 'CH', CHE: 'CH', POR: 'PT', PRT: 'PT', NOR: 'NO', SWE: 'SE', AUT: 'AT', USA: 'US', CAN: 'CA', AUS: 'AU', NZL: 'NZ', SLO: 'SI', SVN: 'SI', POL: 'PL', CZE: 'CZ', COL: 'CO', ECU: 'EC', IRL: 'IE', LUX: 'LU' };
+const riNorm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const riNum = (s) => { const v = parseFloat(String(s ?? '').replace(',', '.').replace(/[^0-9.\-]/g, '')); return isFinite(v) ? v : null; };
+function riDate(s) {
+  s = String(s || '').trim(); let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/), y, mo, d;
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; } else { m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/); if (!m) return null; d = +m[1]; mo = +m[2]; y = +m[3]; if (y < 100) y += y > 40 ? 1900 : 2000; }
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > 2100) return null;
+  return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+const riAge = (iso, ref) => { const b = gd(iso), d = gd(ref); let a = d.getFullYear() - b.getFullYear(); if (d.getMonth() < b.getMonth() || (d.getMonth() === b.getMonth() && d.getDate() < b.getDate())) a--; return a; };
+function riNat(s, ctx) {
+  const up = String(s || '').trim().toUpperCase(); if (NATS[up]) return up; if (RI_N3[up]) return RI_N3[up];
+  const n = riNorm(s); return ctx.nat.get(n) || null;
+}
+function riPot(v) { if (v == null) return 3; const x = v <= 6 ? v : v <= 10 ? (v / 10) * 6 : (v / 100) * 6; return Math.max(1, Math.min(6, Math.round(x))); }
+
+function riParse(text, ctx) {
+  const rows = [], errs = [], warns = []; let first = true; const cl = (v) => Math.round(Math.max(1, Math.min(99, v)));
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (!line.trim()) return;
+    const f = line.split(line.includes(';') ? ';' : '\t').map((s) => s.trim()), tag = `Ligne ${i + 1} (${f[1] || ''} ${f[0] || ''})`;
+    if (first) { first = false; if (!riDate(f[4])) return; }   // première ligne = en-tête
+    if (f.length < 33) return errs.push(`${tag} : ${f.length} colonnes au lieu de 33.`);
+    const birth = riDate(f[4]), nat = riNat(f[3], ctx);
+    if (!f[0] || !f[1]) return errs.push(`${tag} : nom ou prénom manquant.`);
+    if (!birth) return errs.push(`${tag} : date de naissance illisible (« ${f[4]} »).`);
+    if (!nat) return errs.push(`${tag} : pays inconnu (« ${f[3]} »).`);
+    const A = {}; let bad = null;
+    RI_COLS.forEach(([code], k) => {
+      let v = riNum(f[9 + 2 * k]), l = riNum(f[10 + 2 * k]); if (v == null || l == null) { bad = bad || code; return; }
+      v = cl(v); l = cl(l); if (l < v) { warns.push(`${tag} : limite ${code} (${l}) < note (${v}), limite relevée.`); l = v; }
+      A[code] = { v, l };
+    });
+    if (bad) return errs.push(`${tag} : note ou limite manquante (${bad}).`);
+    const avg2 = (a, b, k) => Math.round((a[k] + b[k]) / 2), avg3 = (a, b, c, k) => Math.round((a[k] + b[k] + c[k]) / 3);
+    A.HIL = { v: avg2(A.MM, A.ACC, 'v'), l: avg2(A.MM, A.ACC, 'l') };
+    A.ATT = { v: avg3(A.HIL, A.ACC, A.MTN, 'v'), l: avg3(A.HIL, A.ACC, A.MTN, 'l') };
+    let tid = null;
+    if (f[2] && !/^(libre|sans|free|aucune?|-)/i.test(f[2])) { tid = ctx.teams.get(riNorm(f[2])) || null; if (!tid) warns.push(`${tag} : équipe inconnue « ${f[2]} » (importé sans équipe).`); }
+    let h = riNum(f[7]); if (h != null && h < 3) h *= 100;
+    rows.push({ first: f[1], last: f[0], birth, age: riAge(birth, ctx.ref), nat, tid, pot: riPot(riNum(f[5])), profile: f[6], height: h != null ? Math.round(h) : null, weight: riNum(f[8]), A });
+  });
+  return { rows, errs, warns };
+}
+async function riLoadAll(table, cols) {
+  const out = [];
+  for (let from = 0; from < 40000; from += 1000) { const { data, error } = await sb.from(table).select(cols).order(table === 'rider_limits' ? 'rider_id' : 'id').range(from, from + 999); if (error) throw new Error(error.message); out.push(...(data || [])); if (!data || data.length < 1000) break; }
+  return out;
+}
+async function riLoadLimits() { try { return Object.fromEntries((await riLoadAll('rider_limits', '*')).map((x) => [x.rider_id, x])); } catch (e) { return {}; } }
+
+async function renderRiderImport(c) {
+  c.innerHTML = `<div class="panel"><h4>Admin : importer des coureurs</h4>
+    <p class="muted">Une ligne par coureur, séparée par des points-virgules (33 colonnes). Les limites sont enregistrées dans une table cachée aux joueurs.</p>
+    <p class="muted" style="font-size:.76rem">Nom; Prénom; Équipe; Pays; Naissance; Potentiel; Profil; Taille; Poids; Plaine; Limite plaine; Montagne; Limite montagne; Moy. montagne; Limite; Descente; Limite; Pavés; Limite; CLM; Limite; Prologue; Limite; Sprint; Limite; Accélération; Limite; Endurance; Limite; Résistance; Limite; Récupération; Limite</p>
+    <textarea id="ri-txt" rows="10" placeholder="Pogacar;Tadej;UAE Team Emirates;SVN;21/09/1998;6;Grimpeur;1.76;66;78;84;92;98;90;96;85;92;72;80;90;96;80;88;74;82;88;94;93;98;88;96;86;94"></textarea>
+    <div class="rov-btns" style="align-items:center"><input type="file" id="ri-file" accept=".csv,.txt" style="width:auto"><label style="margin:0;display:flex;gap:.4rem;align-items:center"><input type="checkbox" id="ri-over" style="width:auto"> Écraser les notes actuelles des coureurs déjà présents</label></div>
+    <div class="rov-btns"><button id="ri-chk">Analyser</button><button id="ri-go" disabled>Importer</button></div><div id="ri-out" style="margin-top:.6rem"></div></div>`;
+  let plan = null;
+  $('ri-file').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return; const buf = await f.arrayBuffer();
+    try { $('ri-txt').value = new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (er) { $('ri-txt').value = new TextDecoder('windows-1252').decode(buf); }
+  };
+  const lines = (a, cls) => (a.length ? `<div class="${cls}" style="font-size:.78rem;margin-top:.4rem">${a.slice(0, 15).map(esc).join('<br>')}${a.length > 15 ? `<br>… et ${a.length - 15} autre(s)` : ''}</div>` : '');
+  $('ri-chk').onclick = async () => {
+    $('ri-out').innerHTML = '<span class="muted">Analyse…</span>'; $('ri-go').disabled = true;
+    try {
+      const [tm, ex] = await Promise.all([sb.from('teams').select('id, name, official_name'), riLoadAll('riders', 'id, first_name, last_name, birth_date')]);
+      const teams = new Map(), nat = new Map();
+      (tm.data || []).forEach((t) => { teams.set(riNorm(t.name), t.id); if (t.official_name) teams.set(riNorm(t.official_name), t.id); });
+      Object.entries(NATS).forEach(([k, v]) => nat.set(riNorm(v), k));
+      const p = riParse($('ri-txt').value, { teams, nat, ref: state.game.game_date });
+      const seen = new Set(ex.map((x) => riNorm(x.first_name + ' ' + x.last_name))), nUpd = p.rows.filter((r) => seen.has(riNorm(r.first + ' ' + r.last))).length;
+      plan = { ...p, ex };
+      $('ri-out').innerHTML = `<div><b>${p.rows.length}</b> coureur(s) valide(s) : <b>${p.rows.length - nUpd}</b> nouveau(x), <b>${nUpd}</b> déjà présent(s) · <b class="${p.errs.length ? 'down' : ''}">${p.errs.length}</b> erreur(s) · ${p.warns.length} avertissement(s)</div>${lines(p.errs, 'down')}${lines(p.warns, 'muted')}<div id="ri-st" class="muted" style="margin-top:.4rem"></div>`;
+      $('ri-go').disabled = !p.rows.length;
+    } catch (e) { $('ri-out').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
+  $('ri-go').onclick = async () => {
+    if (!plan) return; $('ri-go').disabled = true; const over = $('ri-over').checked, st = (m) => ($('ri-st').textContent = m), errs = [];
+    const byFull = new Map(), byName = new Map();
+    plan.ex.forEach((x) => { const n = riNorm(x.first_name + ' ' + x.last_name); if (x.birth_date) byFull.set(n + '|' + x.birth_date, x.id); else byName.set(n, x.id); });
+    const find = (r) => { const n = riNorm(r.first + ' ' + r.last); return byFull.get(n + '|' + r.birth) || byName.get(n) || null; };
+    const caracs = (r) => Object.fromEntries(Object.entries(r.A).map(([k, o]) => [k.toLowerCase(), o.v]));
+    const legacy = (cc) => (typeof legacyStats === 'function' ? legacyStats(cc) : (() => { const i = (v) => Math.round(40 + ((v - 50) * 34) / 35); return { mountain: i(cc.mtn), flat: i(cc.fla), hills: i(cc.hil), time_trial: i(cc.ttr), sprint: i(cc.spr), cobbles: i(cc.cob), stamina: i(cc.sta), recovery: i(cc.rec) }; })());
+    const bio = (r) => ({ birth_date: r.birth, age: r.age, height_cm: r.height, weight_kg: r.weight, profile: r.profile || null, potential: r.pot, nationality: r.nat });
+    const limRow = (id, r) => ({ rider_id: id, ...Object.fromEntries(Object.entries(r.A).map(([k, o]) => ['lim_' + k.toLowerCase(), o.l])) });
+    const news = [], upds = [], lims = [];
+    plan.rows.forEach((r) => { const id = find(r); if (id) upds.push([id, r]); else news.push(r); });
+    for (let i = 0; i < news.length; i += 100) {
+      st(`Création des coureurs… ${i}/${news.length}`);
+      const batch = news.slice(i, i + 100), payload = batch.map((r) => {
+        const cc = caracs(r), lv = Object.values(r.A).map((o) => o.v).sort((a, b) => b - a).slice(0, 3).reduce((s, x) => s + x, 0) / 3;
+        return { first_name: r.first, last_name: r.last, team_id: r.tid, ...bio(r), ...cc, ...legacy(cc), contract_salary: Math.round((1500 * Math.pow(1.12, lv - 50)) / 100) * 100, contract_end_year: r.tid ? state.game.season_year + 2 : null };
+      });
+      const { data, error } = await sb.from('riders').insert(payload).select('id');
+      if (error) { errs.push(`Création (lot ${i / 100 + 1}) : ${error.message}`); continue; }
+      (data || []).forEach((d, k) => lims.push(limRow(d.id, batch[k])));
+    }
+    for (let i = 0; i < upds.length; i += 15) {
+      st(`Mise à jour des coureurs existants… ${i}/${upds.length}`);
+      await Promise.all(upds.slice(i, i + 15).map(async ([id, r]) => {
+        const cc = caracs(r), body = over ? { ...bio(r), team_id: r.tid, ...cc, ...legacy(cc) } : bio(r);
+        const { error } = await sb.from('riders').update(body).eq('id', id); if (error) errs.push(`${r.first} ${r.last} : ${error.message}`); else lims.push(limRow(id, r));
+      }));
+    }
+    for (let i = 0; i < lims.length; i += 200) { st(`Enregistrement des limites cachées… ${i}/${lims.length}`); const { error } = await sb.from('rider_limits').upsert(lims.slice(i, i + 200), { onConflict: 'rider_id' }); if (error) errs.push('Limites : ' + error.message); }
+    st(''); $('ri-out').innerHTML = `<div class="${errs.length ? 'down' : 'up'}"><b>${news.length}</b> créé(s), <b>${upds.length}</b> mis à jour, <b>${lims.length}</b> limite(s) enregistrée(s).</div>${lines(errs, 'down')}`;
+    toast(errs.length ? 'Import terminé avec des erreurs.' : 'Import terminé.');
+  };
 }
 // ---------- Démarrage ----------
 (async function boot() {

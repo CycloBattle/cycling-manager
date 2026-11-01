@@ -1282,7 +1282,8 @@ async function renderNews(c) {
 // plaine, montagne, moyenne montagne, descente, pavés, contre-la-montre, prologue, sprint, accélération, endurance, résistance, récupération
 let TE_LIM = {};   // limites cachées chargées pour le moteur d'entraînement (admin uniquement)
 const RI_COLS = [['FLA', 'fla'], ['MTN', 'mtn'], ['MM', 'mm'], ['DHI', 'dhi'], ['COB', 'cob'], ['TTR', 'ttr'], ['PRL', 'prl'], ['SPR', 'spr'], ['ACC', 'acc'], ['STA', 'sta'], ['RES', 'res'], ['REC', 'rec']];
-const RI_N3 = { FRA: 'FR', BEL: 'BE', ITA: 'IT', ESP: 'ES', GER: 'DE', DEU: 'DE', NED: 'NL', NLD: 'NL', DEN: 'DK', DNK: 'DK', GBR: 'GB', SUI: 'CH', CHE: 'CH', POR: 'PT', PRT: 'PT', NOR: 'NO', SWE: 'SE', AUT: 'AT', USA: 'US', CAN: 'CA', AUS: 'AU', NZL: 'NZ', SLO: 'SI', SVN: 'SI', POL: 'PL', CZE: 'CZ', COL: 'CO', ECU: 'EC', IRL: 'IE', LUX: 'LU' };
+const RI_ISO = {};   // codes pays à 3 lettres (ou à 2) → [code ISO à 2 lettres, nom français]
+'AFG:AF:Afghanistan;ALB:AL:Albanie;ALG,DZA:DZ:Algérie;AND:AD:Andorre;ARG:AR:Argentine;ARM:AM:Arménie;AUS:AU:Australie;AUT:AT:Autriche;AZE:AZ:Azerbaïdjan;BAH,BHS:BS:Bahamas;BLR:BY:Biélorussie;BEL:BE:Belgique;BOL:BO:Bolivie;BIH:BA:Bosnie-Herzégovine;BRA:BR:Brésil;BUL,BGR:BG:Bulgarie;CAN:CA:Canada;CHN,CHI:CN:Chine;COL:CO:Colombie;CRC,CRI:CR:Costa Rica;CRO,HRV:HR:Croatie;CUB:CU:Cuba;CYP:CY:Chypre;CZE:CZ:République tchèque;DEN,DNK:DK:Danemark;DOM:DO:République dominicaine;ECU:EC:Équateur;EGY:EG:Égypte;ERI:ER:Érythrée;ESP:ES:Espagne;EST:EE:Estonie;ETH:ET:Éthiopie;FIN:FI:Finlande;FRA:FR:France;GBR,ENG,SCO,WAL:GB:Royaume-Uni;GEO:GE:Géorgie;GER,DEU:DE:Allemagne;GRE,GRC:GR:Grèce;GUA,GTM:GT:Guatemala;HKG:HK:Hong Kong;HUN:HU:Hongrie;INA,IDN:ID:Indonésie;IND:IN:Inde;IRI,IRN:IR:Iran;IRL:IE:Irlande;ISL:IS:Islande;ISR:IL:Israël;ITA:IT:Italie;JPN:JP:Japon;KAZ:KZ:Kazakhstan;KEN:KE:Kenya;KGZ:KG:Kirghizistan;KOR:KR:Corée du Sud;KSA,SAU:SA:Arabie saoudite;LAT,LVA:LV:Lettonie;LTU:LT:Lituanie;LUX:LU:Luxembourg;MAR:MA:Maroc;MAS,MYS:MY:Malaisie;MCO:MC:Monaco;MDA:MD:Moldavie;MEX:MX:Mexique;MKD:MK:Macédoine du Nord;MLT:MT:Malte;MNE:ME:Monténégro;NAM:NA:Namibie;NED,NLD:NL:Pays-Bas;NOR:NO:Norvège;NZL:NZ:Nouvelle-Zélande;PAN:PA:Panama;PER:PE:Pérou;PHI,PHL:PH:Philippines;POL:PL:Pologne;POR,PRT:PT:Portugal;PUR:PR:Porto Rico;QAT:QA:Qatar;ROU,ROM:RO:Roumanie;RSA,ZAF:ZA:Afrique du Sud;RUS:RU:Russie;RWA:RW:Rwanda;SLO,SVN:SI:Slovénie;SRB,SCG:RS:Serbie;SUI,CHE:CH:Suisse;SVK:SK:Slovaquie;SWE:SE:Suède;THA:TH:Thaïlande;TUN:TN:Tunisie;TUR:TR:Turquie;TWN,TPE:TW:Taïwan;UAE,ARE:AE:Émirats arabes unis;UKR:UA:Ukraine;URU,URY:UY:Uruguay;USA:US:États-Unis;UZB:UZ:Ouzbékistan;VEN:VE:Venezuela;VIE,VNM:VN:Viêt Nam;ERI:ER:Érythrée;LBN:LB:Liban;JAM:JM:Jamaïque;TTO:TT:Trinité-et-Tobago;CHL:CL:Chili'.split(';').forEach((s) => { const [c, i, n] = s.split(':'); c.split(',').forEach((k) => (RI_ISO[k] = [i, n])); });
 const riNorm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const riNum = (s) => { const v = parseFloat(String(s ?? '').replace(',', '.').replace(/[^0-9.\-]/g, '')); return isFinite(v) ? v : null; };
 function riDate(s) {
@@ -1293,8 +1294,11 @@ function riDate(s) {
 }
 const riAge = (iso, ref) => { const b = gd(iso), d = gd(ref); let a = d.getFullYear() - b.getFullYear(); if (d.getMonth() < b.getMonth() || (d.getMonth() === b.getMonth() && d.getDate() < b.getDate())) a--; return a; };
 function riNat(s, ctx) {
-  const up = String(s || '').trim().toUpperCase(); if (NATS[up]) return up; if (RI_N3[up]) return RI_N3[up];
-  const n = riNorm(s); return ctx.nat.get(n) || null;
+  const up = String(s || '').trim().toUpperCase(); if (!up) return null;
+  if (NATS[up]) return up;
+  const e = RI_ISO[up] || (up.length === 2 ? Object.values(RI_ISO).find((v) => v[0] === up) : null);
+  if (e) { if (!NATS[e[0]]) ctx.newC[e[0]] = e[1]; return e[0]; }   // pays absent de la base : sera ajouté à l'import
+  return ctx.nat.get(riNorm(s)) || null;
 }
 function riPot(v) { if (v == null) return 3; const x = v <= 6 ? v : v <= 10 ? (v / 10) * 6 : (v / 100) * 6; return Math.max(1, Math.min(6, Math.round(x))); }
 
@@ -1304,7 +1308,7 @@ function riParse(text, ctx) {
     if (!line.trim()) return;
     const f = line.split(line.includes(';') ? ';' : '\t').map((s) => s.trim()), tag = `Ligne ${i + 1} (${f[1] || ''} ${f[0] || ''})`;
     if (first) { first = false; if (!riDate(f[4])) return; }   // première ligne = en-tête
-    if (f.length < 33) return errs.push(`${tag} : ${f.length} colonnes au lieu de 33.`);
+        if (f.length < 33) return errs.push(`${tag} : ${f.length} colonnes au lieu de 33 (il manque ${33 - f.length} champ(s) ou un « ; » : vérifiez les notes et limites de cette ligne).`);
     const birth = riDate(f[4]), nat = riNat(f[3], ctx);
     if (!f[0] || !f[1]) return errs.push(`${tag} : nom ou prénom manquant.`);
     if (!birth) return errs.push(`${tag} : date de naissance illisible (« ${f[4]} »).`);
@@ -1319,10 +1323,10 @@ function riParse(text, ctx) {
     const avg2 = (a, b, k) => Math.round((a[k] + b[k]) / 2), avg3 = (a, b, c, k) => Math.round((a[k] + b[k] + c[k]) / 3);
     A.HIL = { v: avg2(A.MM, A.ACC, 'v'), l: avg2(A.MM, A.ACC, 'l') };
     A.ATT = { v: avg3(A.HIL, A.ACC, A.MTN, 'v'), l: avg3(A.HIL, A.ACC, A.MTN, 'l') };
-    let tid = null;
-    if (f[2] && !/^(libre|sans|free|aucune?|-)/i.test(f[2])) { tid = ctx.teams.get(riNorm(f[2])) || null; if (!tid) warns.push(`${tag} : équipe inconnue « ${f[2]} » (importé sans équipe).`); }
+    let tid = null, tname = null;
+    if (f[2] && !/^(libre|sans|free|aucune?|-)/i.test(f[2])) { tid = ctx.teams.get(riNorm(f[2])) || null; if (!tid) tname = f[2]; }   // équipe inconnue : créée à l'import
     let h = riNum(f[7]); if (h != null && h < 3) h *= 100;
-    rows.push({ first: f[1], last: f[0], birth, age: riAge(birth, ctx.ref), nat, tid, pot: riPot(riNum(f[5])), profile: f[6], height: h != null ? Math.round(h) : null, weight: riNum(f[8]), A });
+    rows.push({ tname, first: f[1], last: f[0], birth, age: riAge(birth, ctx.ref), nat, tid, pot: riPot(riNum(f[5])), profile: f[6], height: h != null ? Math.round(h) : null, weight: riNum(f[8]), A });
   });
   return { rows, errs, warns };
 }
@@ -1339,6 +1343,7 @@ async function renderRiderImport(c) {
     <p class="muted" style="font-size:.76rem">Nom; Prénom; Équipe; Pays; Naissance; Potentiel; Profil; Taille; Poids; Plaine; Limite plaine; Montagne; Limite montagne; Moy. montagne; Limite; Descente; Limite; Pavés; Limite; CLM; Limite; Prologue; Limite; Sprint; Limite; Accélération; Limite; Endurance; Limite; Résistance; Limite; Récupération; Limite</p>
     <textarea id="ri-txt" rows="10" placeholder="Pogacar;Tadej;UAE Team Emirates;SVN;21/09/1998;6;Grimpeur;1.76;66;78;84;92;98;90;96;85;92;72;80;90;96;80;88;74;82;88;94;93;98;88;96;86;94"></textarea>
     <div class="rov-btns" style="align-items:center"><input type="file" id="ri-file" accept=".csv,.txt" style="width:auto"><label style="margin:0;display:flex;gap:.4rem;align-items:center"><input type="checkbox" id="ri-over" style="width:auto"> Écraser les notes actuelles des coureurs déjà présents</label></div>
+    <div class="rov-btns" style="align-items:center"><label style="margin:0">Division des équipes créées :</label>${selHtml('ri-div', [['PRO_TEAM', 'ProTeam'], ['CONTINENTAL', 'Continentale'], ['WORLD_TOUR', 'WorldTour']], 'PRO_TEAM')}</div>
     <div class="rov-btns"><button id="ri-chk">Analyser</button><button id="ri-go" disabled>Importer</button></div><div id="ri-out" style="margin-top:.6rem"></div></div>`;
   let plan = null;
   $('ri-file').onchange = async (e) => {

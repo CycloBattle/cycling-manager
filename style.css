@@ -358,3 +358,25 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .nws-row.mine .nws-b { background:#0e7490; } .nws-row.bad .nws-b { background:#b91c1c; }
 @media (max-width:1250px) { .nws-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:700px) { .nws-grid { grid-template-columns:1fr; } }
+
+/* Logos : plus grands, sans fond ni cadre (PNG transparents) */
+.fm-brand img { width:48px !important; height:48px !important; border-radius:0 !important; background:none !important; object-fit:contain; filter:drop-shadow(0 1px 3px rgba(0,0,0,.35)); }
+.rteam img { width:68px !important; height:68px !important; border-radius:0 !important; background:none !important; object-fit:contain; }
+.tlogo { width:60px !important; height:60px !important; border-radius:0 !important; background:none !important; object-fit:contain; }
+.fm-brand b { color:var(--th-txt,#fff); }
+
+/* Barre de recherche compacte */
+.fm-search { display:flex; align-items:center; gap:.4rem; background:var(--th-field,rgba(0,0,0,.28)); color:var(--th-dim,#ddd6fe); border-radius:6px; padding:0 .6rem; }
+.fm-search input { width:96px !important; background:none !important; border:0 !important; outline:none; padding:.38rem 0 !important; font-size:.85rem; color:var(--th-txt,#fff); }
+.fm-search input::placeholder { color:var(--th-dim,#ddd6fe); opacity:1; }
+.fm-search:focus-within { box-shadow:0 0 0 1px var(--th-line,#a78bfa); } .fm-search input:focus { width:150px !important; }
+
+/* Barres du menu aux couleurs du logo de l'équipe */
+.fm-row1 { background:linear-gradient(90deg,var(--th-a,#4c1d95),var(--th-b,#7c3aed) 60%,var(--th-c,#6d28d9)) !important; color:var(--th-txt,#fff); padding-top:.3rem; padding-bottom:.3rem; }
+.fm-row2 { background:var(--th-row2,#111827) !important; border-bottom:2px solid var(--th-acc,transparent); }
+.fm-main button { color:var(--th-dim,#e9d5ff) !important; }
+.fm-main button.on { color:var(--th-txt,#fff) !important; border-bottom-color:var(--th-line,#f472b6) !important; }
+.fm-sub button.on { border-bottom-color:var(--th-acc,#f472b6) !important; }
+.nav-arrow { background:var(--th-field,rgba(0,0,0,.25)) !important; color:var(--th-txt,#fff) !important; }
+.fm-date { background:var(--th-field,rgba(0,0,0,.3)) !important; color:var(--th-txt,#fff); } .fm-date span { color:var(--th-dim,#ddd6fe) !important; }
+.fm-tools button.link { color:var(--th-dim,#9ca3af) !important; }

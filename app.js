@@ -241,6 +241,7 @@ async function continueGame() {
 
 function viewGame() {
   const t = state.team, g = state.game, d = gd(g.game_date);
+    applyTeamTheme(t);
   const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes'], ['racemgr', 'Admin : courses & tags'], ['riderimp', 'Admin : import coureurs']);
   const quick = [['portal|messages', 'Messages'], ['squad|squad', 'Équipe première'], ['recruit|search', 'Base de données cyclistes'], ['recruit|market', 'Marché des transferts'], ['portal|competitions', 'Compétitions']];
   const nr = state.nextRace, n = nr ? daysUntil(nr.date) : null;
@@ -251,7 +252,7 @@ function viewGame() {
         <div class="fm-brand"><img src="${esc(logoSrc(t))}" alt=""><b>${esc(t.official_name || t.name)}</b></div>
         <nav class="fm-main">${Object.entries(MENUS).map(([k, v]) => `<button data-menu="${k}" class="${k === state.menu ? 'on' : ''}">${v.label}</button>`).join('')}</nav>
         <div class="fm-tools">
-          <input id="gsearch" placeholder="Rechercher un coureur" value="${esc(state.q)}"><span class="dot ${navigator.onLine ? '' : 'off'}" title="Connexion"></span>
+          <div class="fm-search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg><input id="gsearch" placeholder="Rechercher" value="${esc(state.q)}"></div><span class="dot ${navigator.onLine ? '' : 'off'}" title="Connexion"></span>
           <div class="fm-date"><b>${DAYS[d.getDay()]} ${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}</b><span>${nr ? (n <= 0 ? 'Course aujourd\'hui' : `Prochaine course : ${n} jour${n > 1 ? 's' : ''}`) : 'Aucune course prévue'}</span></div>
           <button class="fm-continue" id="cont">Continuer &raquo;</button><button class="link" id="out">Quitter</button>
         </div>
@@ -1433,6 +1434,44 @@ async function renderRiderImport(c) {
     st(''); $('ri-out').innerHTML = `<div class="${errs.length ? 'down' : 'up'}"><b>${news.length}</b> coureur(s) créé(s), <b>${upds.length}</b> mis à jour, <b>${madeTeams}</b> équipe(s) créée(s), <b>${nc.length}</b> pays ajouté(s), <b>${lims.length}</b> limite(s) enregistrée(s).</div>${lines(errs, 'down')}`;
     toast(errs.length ? 'Import terminé avec des erreurs.' : 'Import terminé.');
   };
+}
+/* ===== Thème des barres du menu selon la couleur du logo de l'équipe ===== */
+const thRGBtoHSL = ([r, g, b]) => {
+  r /= 255; g /= 255; b /= 255; const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2; let h = 0, s = 0;
+  if (mx !== mn) { const d = mx - mn; s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn); h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; h *= 60; }
+  return [h, s * 100, l * 100];
+};
+const thHSLtoRGB = (h, s, l) => { s /= 100; l /= 100; const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1))); return [f(0), f(8), f(4)].map((x) => Math.round(x * 255)); };
+function teamLogoColor(url) {   // couleur dominante : les gris, le blanc, le noir et le transparent sont ignorés
+  return new Promise((res) => {
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => {
+      try {
+        const S = 64, cv = document.createElement('canvas'); cv.width = cv.height = S; const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(im, 0, 0, S, S);
+        const d = cx.getImageData(0, 0, S, S).data, bins = {};
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3], mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+          if (a < 200 || mx < 70 || (mx - mn) / mx < 0.35) continue;
+          const k = (r >> 5) * 64 + (g >> 5) * 8 + (b >> 5), e = bins[k] || (bins[k] = { n: 0, r: 0, g: 0, b: 0 }); e.n++; e.r += r; e.g += g; e.b += b;
+        }
+        let best = null; Object.values(bins).forEach((e) => { if (!best || e.n > best.n) best = e; });
+        res(best ? [best.r / best.n, best.g / best.n, best.b / best.n].map(Math.round) : null);
+      } catch (e) { res(null); }
+    };
+    im.onerror = () => res(null); im.src = url;
+  });
+}
+async function applyTeamTheme(team) {
+  const url = logoSrc(team), key = 'cm_theme_' + url; let rgb = store.get(key, null);
+  if (!rgb) { rgb = await teamLogoColor(url); if (rgb) store.set(key, rgb); }
+  const root = document.documentElement.style;
+  if (!rgb) { ['a', 'b', 'c', 'row2', 'acc', 'line', 'txt', 'dim', 'field'].forEach((k) => root.removeProperty('--th-' + k)); return; }
+  let [h, s, l] = thRGBtoHSL(rgb); s = Math.max(55, Math.min(100, s));
+  const bL = Math.max(34, Math.min(54, l)), bRGB = thHSLtoRGB(h, s, bL), light = (0.2126 * bRGB[0] + 0.7152 * bRGB[1] + 0.0722 * bRGB[2]) / 255 > 0.55;   // barre claire (ex. jaune) : texte sombre
+  const hsl = (hh, ss, ll) => `hsl(${Math.round(hh)} ${Math.round(ss)}% ${Math.round(ll)}%)`, set = (k, v) => root.setProperty('--th-' + k, v);
+  set('a', hsl(h, s, bL * (light ? 0.9 : 0.62))); set('b', hsl(h, s, bL)); set('c', hsl(h, s, bL * (light ? 0.94 : 0.82)));
+  set('row2', hsl(h, Math.min(s, 45), 10)); set('acc', hsl(h, Math.max(s, 70), light ? bL : 66));
+  set('txt', light ? '#111827' : '#ffffff'); set('dim', light ? 'rgba(17,24,39,.78)' : 'rgba(255,255,255,.72)'); set('field', light ? 'rgba(0,0,0,.14)' : 'rgba(0,0,0,.28)'); set('line', light ? '#111827' : hsl(h, 90, 82));
 }
 // ---------- Démarrage ----------
 (async function boot() {

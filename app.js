@@ -1365,10 +1365,46 @@ async function renderRiderImport(c) {
       $('ri-go').disabled = !p.rows.length;
     } catch (e) { $('ri-out').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   };
+   $('ri-chk').onclick = async () => {
+    $('ri-out').innerHTML = '<span class="muted">Analyse…</span>'; $('ri-go').disabled = true;
+    try {
+      const [tm, ex] = await Promise.all([sb.from('teams').select('id, name, official_name, category'), riLoadAll('riders', 'id, first_name, last_name, birth_date, team_id')]);
+      const teams = new Map(), nat = new Map(), newC = {};
+      (tm.data || []).forEach((t) => { teams.set(riNorm(t.name), t.id); if (t.official_name) teams.set(riNorm(t.official_name), t.id); });
+      Object.entries(NATS).forEach(([k, v]) => nat.set(riNorm(v), k));
+      const p = riParse($('ri-txt').value, { teams, nat, newC, ref: state.game.game_date });
+      const seen = new Set(ex.map((x) => riNorm(x.first_name + ' ' + x.last_name))), nUpd = p.rows.filter((r) => seen.has(riNorm(r.first + ' ' + r.last))).length;
+      const nt = [...new Set(p.rows.filter((r) => r.tname).map((r) => r.tname))];
+      plan = { ...p, ex, newC, teams, tmRows: tm.data || [] };
+      $('ri-out').innerHTML = `<div><b>${p.rows.length}</b> coureur(s) valide(s) : <b>${p.rows.length - nUpd}</b> nouveau(x), <b>${nUpd}</b> déjà présent(s) · <b class="${p.errs.length ? 'down' : ''}">${p.errs.length}</b> erreur(s) · ${p.warns.length} avertissement(s)</div>
+        ${nt.length ? `<div class="muted" style="font-size:.8rem;margin-top:.3rem">Équipes à créer (${nt.length}) : ${esc(nt.slice(0, 12).join(', '))}${nt.length > 12 ? '…' : ''}</div>` : ''}
+        ${Object.keys(newC).length ? `<div class="muted" style="font-size:.8rem">Pays à ajouter (${Object.keys(newC).length}) : ${esc(Object.values(newC).join(', '))}</div>` : ''}${lines(p.errs, 'down')}${lines(p.warns, 'muted')}<div id="ri-st" class="muted" style="margin-top:.4rem"></div>`;
+      $('ri-go').disabled = !p.rows.length;
+    } catch (e) { $('ri-out').innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  };
   $('ri-go').onclick = async () => {
     if (!plan) return; $('ri-go').disabled = true; const over = $('ri-over').checked, st = (m) => ($('ri-st').textContent = m), errs = [];
-    const byFull = new Map(), byName = new Map();
-    plan.ex.forEach((x) => { const n = riNorm(x.first_name + ' ' + x.last_name); if (x.birth_date) byFull.set(n + '|' + x.birth_date, x.id); else byName.set(n, x.id); });
+    // 1. pays manquants
+    const nc = Object.entries(plan.newC || {}).filter(([k]) => !NATS[k]);
+    if (nc.length) { st('Ajout des pays…'); const { error } = await sb.from('countries').upsert(nc.map(([code, name_fr]) => ({ code, name_fr })), { onConflict: 'code' }); if (error) errs.push('Pays : ' + error.message); else nc.forEach(([k, v]) => (NATS[k] = v)); }
+    // 2. équipes manquantes (les équipes de développement sont reliées à l'équipe principale du même nom)
+    const tmap = new Map(plan.teams), isDev = (n) => /(development|devo|u23|academy|junior)/i.test(n), key = (n) => riNorm(n).replace(/\b(development|devo|dev|u23|academy|junior|team)\b/g, ' ').replace(/\s+/g, ' ').trim();
+    const parents = new Map(); (plan.tmRows || []).filter((t) => t.category !== 'DEV' && !isDev(t.name)).forEach((t) => parents.set(key(t.name), t.id));
+    const miss = new Map();
+    plan.rows.forEach((r) => { if (r.tname && !tmap.has(riNorm(r.tname))) { const e = miss.get(riNorm(r.tname)) || { name: r.tname, nat: {} }; e.nat[r.nat] = (e.nat[r.nat] || 0) + 1; miss.set(riNorm(r.tname), e); } });
+    const todo = [...miss.values()].sort((a, b) => isDev(a.name) - isDev(b.name)), div = $('ri-div').value; let madeTeams = 0;
+    for (const t of todo) {
+      st(`Création de l'équipe ${t.name}…`);
+      const nat = Object.entries(t.nat).sort((a, b) => b[1] - a[1])[0][0], dev = isDev(t.name), base = { name: t.name, official_name: t.name, nationality: nat };
+      const tries = [{ ...base, division: div, ...(dev ? { category: 'DEV', parent_team_id: parents.get(key(t.name)) || null } : {}) }, { ...base, division: div }, { name: t.name, nationality: nat }];
+      let made = null, last = null;
+      for (const body of tries) { const { data, error } = await sb.from('teams').insert(body).select('id').single(); if (!error) { made = data.id; break; } last = error.message; }
+      if (made) { tmap.set(riNorm(t.name), made); madeTeams++; if (!dev) parents.set(key(t.name), made); } else errs.push(`Équipe « ${t.name} » : ${last}`);
+    }
+    plan.rows.forEach((r) => { if (!r.tid && r.tname) r.tid = tmap.get(riNorm(r.tname)) || null; });
+    // 3. coureurs
+    const byFull = new Map(), byName = new Map(), exTeam = new Map();
+    plan.ex.forEach((x) => { const n = riNorm(x.first_name + ' ' + x.last_name); exTeam.set(x.id, x.team_id); if (x.birth_date) byFull.set(n + '|' + x.birth_date, x.id); else byName.set(n, x.id); });
     const find = (r) => { const n = riNorm(r.first + ' ' + r.last); return byFull.get(n + '|' + r.birth) || byName.get(n) || null; };
     const caracs = (r) => Object.fromEntries(Object.entries(r.A).map(([k, o]) => [k.toLowerCase(), o.v]));
     const legacy = (cc) => (typeof legacyStats === 'function' ? legacyStats(cc) : (() => { const i = (v) => Math.round(40 + ((v - 50) * 34) / 35); return { mountain: i(cc.mtn), flat: i(cc.fla), hills: i(cc.hil), time_trial: i(cc.ttr), sprint: i(cc.spr), cobbles: i(cc.cob), stamina: i(cc.sta), recovery: i(cc.rec) }; })());
@@ -1389,12 +1425,12 @@ async function renderRiderImport(c) {
     for (let i = 0; i < upds.length; i += 15) {
       st(`Mise à jour des coureurs existants… ${i}/${upds.length}`);
       await Promise.all(upds.slice(i, i + 15).map(async ([id, r]) => {
-        const cc = caracs(r), body = over ? { ...bio(r), team_id: r.tid, ...cc, ...legacy(cc) } : bio(r);
+        const cc = caracs(r), body = over ? { ...bio(r), team_id: r.tid, ...cc, ...legacy(cc) } : { ...bio(r), ...(r.tid && !exTeam.get(id) ? { team_id: r.tid, contract_end_year: state.game.season_year + 2 } : {}) };   // un coureur sans équipe reçoit celle du fichier
         const { error } = await sb.from('riders').update(body).eq('id', id); if (error) errs.push(`${r.first} ${r.last} : ${error.message}`); else lims.push(limRow(id, r));
       }));
     }
     for (let i = 0; i < lims.length; i += 200) { st(`Enregistrement des limites cachées… ${i}/${lims.length}`); const { error } = await sb.from('rider_limits').upsert(lims.slice(i, i + 200), { onConflict: 'rider_id' }); if (error) errs.push('Limites : ' + error.message); }
-    st(''); $('ri-out').innerHTML = `<div class="${errs.length ? 'down' : 'up'}"><b>${news.length}</b> créé(s), <b>${upds.length}</b> mis à jour, <b>${lims.length}</b> limite(s) enregistrée(s).</div>${lines(errs, 'down')}`;
+    st(''); $('ri-out').innerHTML = `<div class="${errs.length ? 'down' : 'up'}"><b>${news.length}</b> coureur(s) créé(s), <b>${upds.length}</b> mis à jour, <b>${madeTeams}</b> équipe(s) créée(s), <b>${nc.length}</b> pays ajouté(s), <b>${lims.length}</b> limite(s) enregistrée(s).</div>${lines(errs, 'down')}`;
     toast(errs.length ? 'Import terminé avec des erreurs.' : 'Import terminé.');
   };
 }

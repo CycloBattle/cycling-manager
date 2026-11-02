@@ -380,3 +380,35 @@ select.trn-c { appearance:none; cursor:pointer; } .trn-c small { color:#cbd5e1; 
 .nav-arrow { background:var(--th-field,rgba(0,0,0,.25)) !important; color:var(--th-txt,#fff) !important; }
 .fm-date { background:var(--th-field,rgba(0,0,0,.3)) !important; color:var(--th-txt,#fff); } .fm-date span { color:var(--th-dim,#ddd6fe) !important; }
 .fm-tools button.link { color:var(--th-dim,#9ca3af) !important; }
+
+/* ===== Boutons : taille compacte et homogène ===== */
+button { padding:.32rem .75rem; font-size:.8rem; font-weight:600; line-height:1.25; border-radius:6px; letter-spacing:.01em; }
+button:not(.link):not(.danger):not(.actitem):not(.rav-tools button) { background:#6d28d9; border:1px solid #7c3aed; box-shadow:none; }
+button:hover { filter:brightness(1.12); }
+button:disabled { opacity:.45; cursor:not-allowed; }
+
+/* Boutons en ligne dans un tableau ou un groupe : ne forcent plus la largeur et ne se chevauchent plus */
+table button, .tbl button, .stat-row button, .rov-btns button, .cmpbtn, .re-exp, [data-obs], [data-sact], [data-neg] { position:static !important; width:auto !important; max-width:none; margin:0; flex:none; padding:.2rem .55rem !important; font-size:.72rem !important; border-radius:5px; white-space:nowrap; vertical-align:middle; }
+td button + button, .rov-btns button + button { margin-left:.3rem; }
+td { vertical-align:middle; }
+
+/* Onglets, calendrier, filtres, vitesse, vues */
+.tabs button, .sq-ctl button, .sim-ctl button, .staffnav button, .re-col button, .rd-orders button, .re-speed button { padding:.28rem .7rem !important; font-size:.78rem !important; font-weight:600; }
+.tabs, .sq-ctl, .sim-ctl, .staffnav { gap:.3rem; align-items:center; }
+.tabs button:not(.on), .sq-ctl button:not(.on), .staffnav button:not(.on) { background:#1f2937 !important; border:1px solid #374151 !important; color:#d1d5db; }
+.tabs button.on, .staffnav button.on, .sq-ctl button.on { background:#6d28d9 !important; border-color:#7c3aed !important; color:#fff; }
+
+/* Menu Actions et menu de navigation */
+.actbtn { padding:.3rem .75rem; font-size:.8rem; gap:.4rem; } .actitem { padding:.4rem .6rem; font-size:.8rem; font-weight:500; }
+.fm-continue { padding:.42rem .9rem; font-size:.85rem; } .nav-arrow { padding:.3rem .6rem; font-size:.85rem; }
+.fm-quick button { padding:.22rem .55rem !important; font-size:.72rem !important; font-weight:500; background:#1f2937 !important; border:0 !important; }
+.fm-sub button { padding:.4rem .55rem; font-size:.82rem; font-weight:500; background:none !important; border:0 !important; }
+.fm-main button { background:none !important; border:0 !important; }
+
+/* Boutons de la fenêtre de négociation et des cartes */
+.tm-btns button { padding:.5rem .9rem; font-size:.85rem; } .tm-tabs button { padding:.35rem .75rem; font-size:.8rem; } .tm-lock { padding:.28rem .5rem; font-size:.7rem; }
+.neg-actions button, .adm-box button { padding:.35rem .8rem; font-size:.8rem; }
+button.link { background:none !important; border:0 !important; padding:.25rem .4rem; font-weight:400; }
+button.danger { background:#7f1d1d !important; border:1px solid #991b1b !important; }
+.rav-tools button { padding:0 !important; font-size:.55rem !important; border:0 !important; background:rgba(11,16,32,.88) !important; }
+.starbtn { background:none !important; border:0 !important; padding:0 .3rem !important; font-size:1.05rem !important; }

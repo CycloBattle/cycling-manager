@@ -11,9 +11,9 @@ function reLog(S, text, mine = false) { S.log.push({ t: S.t, km: reLeadKm(S), te
 
 // Vitesse soutenable du coureur selon la pente (puissance en W/kg), l'aérodynamisme, les pavés, la fatigue, la fringale et sa forme
 function reCap(r, slope, zone) {
-  const s = Math.max(0, slope), st = s >= 5 ? r.mountain : s >= 2.5 ? (r.mountain + r.hills) / 2 : r.hills, wkg = 4.6 + (st - 50) * 0.06;
+  const s = Math.max(0, slope), st = s >= 5 ? r.mountain : s >= 2.5 ? (r.mountain + (r.mm || r.hills)) / 2 : s >= 1 ? ((r.mm || r.hills) + r.hills) / 2 : r.hills, wkg = 4.6 + (st - 50) * 0.06;
   const aero = 44 + (r.flat - 50) * 0.2 + (zone.cobble ? (r.cobbles - 60) * 0.1 - 6 : 0);
-  const v = slope < 0 ? aero + Math.min(32, -slope * 3.6) : 1 / (1 / ((3.6 * wkg) / (9.81 * (s / 100 + 0.005))) + 1 / (aero * (1 + 0.35 * s)));
+  const v = slope < 0 ? aero + Math.min(32, -slope * 3.6) + ((r.dhi || 60) - 60) * 0.12 : 1 / (1 / ((3.6 * wkg) / (9.81 * (s / 100 + 0.005))) + 1 / (aero * (1 + 0.35 * s)));
   return v * (0.55 + (0.45 * r.stam) / 100) * (r.boost || 1);
 }
 
@@ -41,7 +41,7 @@ function reAutoPlace(S, g, act) {   // placement : les meilleurs se placent à l
 }
 
 function createRaceState(race, profile, field, car = 0) {
-  const rng = simRng(String(race.id) + ':' + Date.now());
+  const rng = simRng(String(race.id) + ':' + Date.now() + ':' + Math.random());
     const riders = Object.fromEntries(field.map((r) => [r.id, { ...r, status: 'RACE', place: 'MID', group: 'g0', km: 0, atk: 100, slip: 0, order: null, drop: false }]));
   const S = { race, profile, rng, t: 0, speed: 0, acc: 0, tick: 0, riders, log: [], results: [], done: false, nid: 1, car, breakDone: false, pts: { sprint: {}, kom: {} }, passed: {}, bunch: null, saved: false,
     temp: Math.round(8 + rng() * 18), order: null, wind: 15 + rng() * 25, head: (rng() - 0.5) * 8, wet: rng() < 0.12, groups: [{ id: 'g0', type: 'PELOTON', km: 0, v: 0, tempo: 0.92, riders: field.map((r) => r.id), gap: 0, born: 0, finished: false }] };
@@ -51,7 +51,7 @@ const reAdvance = (S, simSeconds) => { S.acc += simSeconds; while (S.acc >= RE.D
 const reSkipToFinal = (S) => { let n = 0; while (!S.done && reLeadKm(S) < S.profile.km - 1 && n++ < 9000) reStep(S, RE.DT); };                    // saut jusqu'au km final
 
 function reStep(S, dt = RE.DT) {
-  const P = S.profile, total = P.km; S.t += dt;
+  const P = S.profile, total = P.km; S.t += dt; reWeather(S);
   if (S.order && S.t > S.order.until) {   // fin d'une consigne collective
     Object.values(S.riders).forEach((r) => { if (r.ordered) { r.order = null; r.ordered = false; } });
     reLog(S, `Fin de la consigne « ${RE_ORDERS[S.order.id]} ».`, true); S.order = null;
@@ -67,15 +67,15 @@ function reStep(S, dt = RE.DT) {
       act.filter((r) => r.stam < 2 || g.gap > 1800).forEach((r) => { r.status = 'DNF'; g.riders = g.riders.filter((i) => i !== r.id); reLog(S, `Abandon de ${r.name} (${r.team}).`, r.mine); });
     }
     const caps = act.map((r) => reCap(r, slope, zone)).sort((a, b) => b - a), top = caps.slice(0, Math.max(1, Math.ceil(act.length * 0.4))), motor = top.reduce((a, b) => a + b, 0) / top.length;
-    const chasing = g.type === 'PELOTON' && S.groups.some((x) => x.type === 'BREAK' && !x.finished && x.riders.length) && g.gap >= 15 && g.gap <= 420;
-    g.tempo = g.type === 'PELOTON' ? (chasing ? 0.975 : left < 30 ? 1 : 0.92) : g.type === 'BREAK' ? 0.99 : g.type === 'CHASE' ? 1 : g.chase ? 1.03 : 0.88;
+    const chasing = g.type === 'PELOTON' && S.groups.some((x) => x.type === 'BREAK' && !x.finished && x.riders.length) && g.gap >= 15 && g.gap <= 260 + reControl(S, act) * 340;
+    g.tempo = g.type === 'PELOTON' ? (chasing ? 0.93 + 0.058 * reControl(S, act) : left < 30 ? 1 : 0.92) : g.type === 'BREAK' ? 0.99 : g.type === 'CHASE' ? 1 : g.chase ? 1.03 : 0.88;
     if (g.type === 'PELOTON' && S.order?.id === 'TEMPO' && S.t <= S.order.until && act.filter((r) => r.mine && r.place === 'FRONT').length >= 2) g.tempo = Math.max(g.tempo, 0.965);
-    const v = reClamp(motor * g.tempo * (zone.wind ? 0.985 : 1) * (1 - S.head * 0.004) * reSprintBoost(S, g, act), 8, 82); g.v = v; const prev = g.km; g.km += (v * dt) / 3600; reCheckpoints(S, g, prev); reBunchLog(S, g, act);
+    const v = reClamp(motor * g.tempo * (zone.wind ? 0.985 : 1) * (1 - S.head * 0.004) * reSprintBoost(S, g, act) * (S.wet ? (slope < -3 ? 0.9 : 0.985) : 1) * (S.temp > 28 ? 0.985 : 1), 8, 82); g.v = v; const prev = g.km; g.km += (v * dt) / 3600; reCheckpoints(S, g, prev); reBunchLog(S, g, act);
     if (Math.round(S.t / dt) % 6 === 0) reAutoPlace(S, g, act);
 
     for (const r of act) {   // effort (pente, vent, abri) → stamina, énergie d'attaque, hydratation / glycogène
       const cap = reCap(r, slope, zone), sh = 1 - (1 - RE.SHELTER[r.place]) * (slope > 6 ? 0.35 : 1), eff = (v / cap) ** 2 * sh * (g.chase ? 1.1 : 1) * reOrderEff(S, r, g);
-      r.stam = reClamp(r.stam - (0.33 * eff ** 2.2 * (1.3 - r.stamina / 200) * dt) / 60 + (eff < 0.6 ? ((0.6 - eff) * 0.35 * (r.recovery / 60) * dt) / 60 : 0), 0, 100);
+      r.stam = reClamp(r.stam - (0.33 * eff ** 2.2 * (1.3 - ((r.stamina + (r.res || r.stamina)) / 2) / 200) * dt) / 60 + (eff < 0.6 ? ((0.6 - eff) * 0.35 * (r.recovery / 60) * dt) / 60 : 0), 0, 100);
       if (eff > 1.05) r.atk = Math.max(0, r.atk - ((eff - 1.05) * 1.6 * dt) / 10); else if (eff < 0.9) r.atk = Math.min(100, r.atk + (0.05 * (r.recovery / 60) * dt) / 10);
       r.slip = eff > 1.2 ? r.slip + (eff - 1.2) * dt * 2 : Math.max(0, r.slip - dt * 0.5);
       if (r.slip > 40 || r.stam < 5) r.drop = true;
@@ -142,12 +142,14 @@ function reAttack(S, id) {   // ordre d'attaque d'un de vos coureurs
   if (r.atk < 40) return `${r.name} manque d'énergie d'attaque (${Math.round(r.atk)} %).`;
   reAttackIds(S, g, [r]); return `${r.name} attaque !`;
 }
-function reAutoAttacks(S, dt) {   // attaques des équipes adverses : échappée du matin, côtes, fin de course
+function reAutoAttacks(S, dt) {   // échappée du matin = coureurs de moindre niveau ; attaques tardives = leaders adaptés au terrain ; sprinteurs n'attaquent pas sur arrivée plate
   const p = S.groups.find((g) => g.type === 'PELOTON' && !g.finished && g.riders.length); if (!p) return;
-  const act = p.riders.map((id) => S.riders[id]).filter((r) => r.status === 'RACE' && !r.mine); if (act.length < 12) return;
-  const slope = reSlope(S.profile, p.km), early = p.km > 4 && p.km < 35 && !S.breakDone, hot = (slope > 3 && slope < 9) || S.profile.km - p.km < 45;
-  if (S.rng() >= (early ? 0.02 : hot ? 0.0015 : 0.0004) * (dt / 10)) return;
-  const pick = act.filter((r) => r.atk > 60).map((r) => [r, r.atk + r.flat + r.mountain + S.rng() * 60]).sort((a, b) => b[1] - a[1]).slice(0, 1 + Math.floor(S.rng() * (early ? 5 : 3))).map((x) => x[0]);
+  const all = p.riders.map((id) => S.riders[id]).filter((r) => r.status === 'RACE'), act = all.filter((r) => !r.mine); if (act.length < 12) return;
+  const slope = reSlope(S.profile, p.km), left = S.profile.km - p.km, early = p.km > 4 && p.km < 40 && !S.breakDone, hot = (slope > 3 && slope < 12) || left < 45;
+  const lv = all.map((r) => r.level).sort((a, b) => a - b), q = (x) => lv[Math.floor(lv.length * x)] || 0;
+  if (S.rng() >= (early ? 0.02 : hot ? 0.0012 : 0.0004) * (dt / 10) * (S.wind > 35 ? 1.2 : 1)) return;
+  const pool = act.filter((r) => r.atk > (early ? 50 : 60) && (early ? r.level <= q(0.65) : r.level >= q(0.45)));
+  const pick = pool.map((r) => [r, reAtkScore(S, r, slope, left) + S.rng() * 14]).sort((a, b) => b[1] - a[1]).slice(0, early ? 2 + Math.floor(S.rng() * 4) : 1 + Math.floor(S.rng() * 2)).map((x) => x[0]);
   if (pick.length) reAttackIds(S, p, pick);
 }
 /* ===== Fin de course : emballage final, classements, primes, sauvegarde ===== */
@@ -195,10 +197,12 @@ function reCheckpoints(S, g, prev) {
   });
 }
 // Score de sprint : sprint, accélération, énergie, stamina, placement (Avant / Milieu / Arrière) et poisson-pilote
-function reSprintScore(S, r) {
+function reSprintScore(S, r) {   // le type d'arrivée décide : plat = sprinteurs, bosse = puncheurs, sommet = grimpeurs
+  const fin = (S.mix || (S.mix = reMix(S.profile))).last;
+  const raw = fin === 'FLAT' ? r.sprint * 0.62 + r.acc * 0.38 : fin === 'HILL' ? r.hills * 0.3 + r.att * 0.3 + r.acc * 0.2 + r.sprint * 0.2 : r.mountain * 0.55 + r.att * 0.25 + (r.mm || r.mountain) * 0.2;
   const place = { FRONT: 1.05, MID: 1, BACK: 0.92 }[r.place] || 1, pil = r.led ? 1 + 0.08 * r.led : 1, ord = S.order?.id === 'TRAIN' && r.id === S.order.leader ? 1.07 : 1;
-  const base = (r.sprint * 0.65 + r.acc * 0.35) * (0.55 + (0.45 * r.atk) / 100) * (0.6 + (0.4 * r.stam) / 100) * place * pil * ord;
-  return { score: base * (0.92 + 0.16 * S.rng()), parts: { sprint: r.sprint, acc: r.acc, place: r.place, pilot: r.led ? +(r.led * 8).toFixed(1) : 0 } };
+  const base = Math.pow(Math.max(1, raw) / 80, fin === 'FLAT' ? 7 : 5) * 100 * (0.55 + (0.45 * r.atk) / 100) * (0.6 + (0.4 * r.stam) / 100) * place * pil * ord;   // exposant élevé : un grimpeur ne bat pas un sprinteur à plat
+  return { score: base * (0.93 + 0.14 * S.rng()), parts: { sprint: r.sprint, acc: r.acc, place: r.place, pilot: r.led ? +(r.led * 8).toFixed(1) : 0 } };
 }
 function reFinish(S, g) {
   const total = S.profile.km, act = g.riders.map((id) => S.riders[id]).filter((r) => r.status === 'RACE');
@@ -277,12 +281,16 @@ async function renderRaceResults(c, S, P) {
   }
 }
 
-const reMake = (r, t, mine) => ({ id: r.id, photo_url: r.photo_url, photo_crop: r.photo_crop, name: `${r.first_name} ${r.last_name}`, team: t.official_name || t.name, teamId: t.id, mine, level: r.level, flat: r.flat || 60, mountain: r.mountain || 60,
-  hills: r.hills || 60, time_trial: r.time_trial || 60, sprint: r.sprint || 60, acc: r.acc || r.sprint || 60, cobbles: r.cobbles || 60, stamina: r.stamina || 60, recovery: r.recovery || 60, wheels: 0,
-  stam: 100 - (r.fatigue || 0) * 0.4,   // forme et fatigue issues de l'entraînement ; bonus du staff (stratégie de course) pour votre équipe
-  boost: reClamp((r.fitness ?? 70) / 70, 0.9, 1.08) * (mine && typeof calculateStaffImpact === 'function' ? calculateStaffImpact(state.team.id, r).raceBonus : 1) });
+const reMake = (r, t, mine) => {   // notes réelles des 14 attributs (le type de coureur et l'âge servent aux consignes)
+  const A = attrsOf(r), v = (k) => Number(A[k]) || 60;
+  return { id: r.id, photo_url: r.photo_url, photo_crop: r.photo_crop, name: `${r.first_name} ${r.last_name}`, team: t.official_name || t.name, teamId: t.id, mine, level: r.level, spec: r.spec, age: r.age,
+    flat: v('FLA'), mountain: v('MTN'), mm: v('MM'), hills: v('HIL'), att: v('ATT'), dhi: v('DHI'), time_trial: v('TTR'), sprint: v('SPR'), acc: v('ACC'), cobbles: v('COB'), stamina: v('STA'), res: v('RES'), recovery: v('REC'), wheels: 0,
+    stam: 100 - (r.fatigue || 0) * 0.4,
+    boost: reClamp((r.fitness ?? 70) / 70, 0.9, 1.08) * (0.97 + Math.random() * 0.06) * (mine && typeof calculateStaffImpact === 'function' ? calculateStaffImpact(state.team.id, r).raceBonus : 1) };   // forme du jour : ±3 %
+};
 
-async function buildRaceField(race) {
+async function buildRaceField(race, P0) {
+  const mix = reMix(P0 || generateRaceProfile(race));   // les directeurs sportifs choisissent les coureurs adaptés au parcours
   const myId = state.team.id;
   const [tm, rs, en, inf] = await Promise.all([
     sb.from('teams').select('id, name, official_name, category').neq('category', 'DEV'), sb.from('riders').select('*').not('team_id', 'is', null),
@@ -293,13 +301,13 @@ async function buildRaceField(race) {
   (er || []).forEach((x) => (picked[ent[x.entry_id]] = picked[ent[x.entry_id]] || new Set()).add(x.rider_id));
   const rows = enrich(rs.data || [], state.game.game_date), riders = [];
   for (const t of tm.data || []) {
-    const pool = rows.filter((r) => r.team_id === t.id).sort((a, b) => b.level - a.level), sel = picked[t.id]?.size ? pool.filter((r) => picked[t.id].has(r.id)) : pool.slice(0, 7);   // sans sélection : meilleurs coureurs
+    const pool = rows.filter((r) => r.team_id === t.id).sort((a, b) => reFit(b, mix) - reFit(a, mix)), sel = picked[t.id]?.size ? pool.filter((r) => picked[t.id].has(r.id)) : pool.slice(0, 7);   // sans sélection : meilleurs coureurs
     sel.forEach((r) => riders.push(reMake(r, t, t.id === myId)));
   }
   const rng = simRng(String(race.id) + 'field'), teams = ['Alba', 'Borea', 'Cassini', 'Delta', 'Eolia', 'Fenix', 'Garona', 'Helios', 'Ivoire', 'Jura'], need = Math.max(0, 90 - riders.length);
   for (let i = 0; i < need; i++) {   // peloton complété par des coureurs fictifs
     const q = 52 + rng() * 22, f = (b) => reClamp(q + (rng() - 0.5) * b, 45, 82);
-    riders.push({ id: 'f' + i, name: `Coureur ${i + 1}`, team: `Équipe ${teams[i % teams.length]}`, teamId: 'f', mine: false, level: q, flat: f(12), mountain: f(14), hills: f(12), time_trial: f(12), sprint: f(16), acc: f(16), cobbles: f(12), stamina: f(12), recovery: f(12), stam: 100, boost: 1, wheels: 0 });
+    riders.push({ id: 'f' + i, name: `Coureur ${i + 1}`, team: `Équipe ${teams[i % teams.length]}`, teamId: 'f', mine: false, level: q, flat: f(12), mountain: f(14), hills: f(12), time_trial: f(12), sprint: f(16), acc: f(16), att: f(14), dhi: f(12), res: f(12), mm: f(14), spec: 'PST', age: 27, cobbles: f(12), stamina: f(12), recovery: f(12), stam: 100, boost: 1, wheels: 0 });
   }
   return { riders, car: (inf.data || []).find((x) => x.type === 'VEHICLES')?.level || 0 };
 }
@@ -433,4 +441,44 @@ async function renderLiveRaceDashboard(c) {
     if (S.speed > 0 && !S.done) { reAdvance(S, 0.2 * RE.BASE * S.speed); upd(S.tick++ % 5 === 0 && document.activeElement?.tagName !== 'SELECT'); }
   }, 200);
   upd();
+}
+/* ===== Réalisme : parcours, sélection, contrôle du peloton, météo, banc d'essai ===== */
+const reFinType = (P) => { const g = (profileAlt(P, P.km) - profileAlt(P, Math.max(0, P.km - 3))) / 30; return g > 5 ? 'MTN' : g > 1.6 ? 'HILL' : 'FLAT'; };   // pente moyenne des 3 derniers km
+function reMix(P) {
+  const k = P.km, gain = P.climbs.reduce((s, c) => s + c.gain, 0), hard = P.climbs.filter((c) => ['HC', '1', '2'].includes(String(c.cat))).length, cob = P.cobbles.reduce((s, c) => s + (c.to - c.from), 0) / k;
+  return { climb: Math.min(1, gain / k / 30 + hard * 0.08), cob: Math.min(1, cob * 3), tt: P.type === 'TIME_TRIAL' ? 1 : 0, last: reFinType(P) };
+}
+const reFit = (row, m) => {   // adéquation d'un coureur au parcours (sélection des équipes)
+  const A = attrsOf(row), c = (A.MTN + A.MM) / 2, f = (A.SPR + A.FLA) / 2, h = (A.HIL + A.ATT) / 2;
+  const road = m.climb * c + (1 - m.climb) * (m.last === 'FLAT' ? f : h), body = road * (1 - m.cob) + A.COB * m.cob;
+  return row.level * 0.35 + 0.65 * (m.tt ? A.TTR : body);
+};
+function reControl(S, act) {   // force de la poursuite : sprinteurs sur arrivée plate, leaders de classement général en montagne
+  const m = S.mix || (S.mix = reMix(S.profile)), sp = act.filter((r) => r.sprint >= 76).length, gc = act.filter((r) => r.mountain >= 78 && r.att >= 70).length;
+  const wantSprint = m.last === 'FLAT' || (m.last === 'HILL' && m.climb < 0.35) ? Math.min(1, sp / 3) : 0, wantGc = m.climb > 0.3 ? Math.min(1, gc / 3) * 0.8 : 0;
+  return Math.max(wantSprint, wantGc);
+}
+function reAtkScore(S, r, slope, left) {
+  const m = S.mix || (S.mix = reMix(S.profile)), climbing = slope > 3 && slope < 12, gc = (r.mountain + r.att + r.res) / 3, punch = (r.hills + r.att + r.acc) / 3, rouleur = (r.flat + r.res + r.stamina) / 3;
+  let s = climbing || left < 25 ? (m.climb > 0.35 ? gc : punch) : rouleur * 0.6 + r.att * 0.4;
+  if (r.sprint > 78 && m.last === 'FLAT') s -= 14;
+  return s;
+}
+function reWeather(S) {   // la météo évolue toutes les 10 minutes de course : pluie, vent, température
+  const k = Math.floor(S.t / 600); if (k === S.wx) return; S.wx = k;
+  const was = S.wet; if (!S.wet && S.rng() < 0.05) S.wet = true; else if (S.wet && S.rng() < 0.18) S.wet = false;
+  S.wind = reClamp(S.wind + (S.rng() - 0.5) * 8, 5, 55); S.head = reClamp(S.head + (S.rng() - 0.5) * 3, -6, 6); S.temp = Math.round((S.temp ?? 18) + (S.rng() - 0.5) * 1.5);
+  if (S.wet !== was) reLog(S, S.wet ? 'La pluie se met à tomber sur la course.' : 'La pluie cesse : la route sèche.');
+}
+// Banc d'essai : simule la course n fois sans affichage et donne les vainqueurs. Console : await reBenchmark('ID_DE_LA_COURSE', 20)
+async function reBenchmark(raceId, n = 20) {
+  const { data: race } = await sb.from('races').select('*').eq('id', raceId).single(), P = generateRaceProfile(race), F = await buildRaceField(race, P), wins = {}, types = {};
+  for (let i = 0; i < n; i++) {
+    const S = createRaceState(race, P, F.riders.map((r) => ({ ...r })), F.car); reRoles(S);
+    let k = 0; while (!S.done && k++ < 4000) reStep(S, RE.DT);
+    const w = S.results.slice().sort((a, b) => a.time - b.time)[0]; if (!w) continue;
+    const spec = S.riders[w.id].spec || '?'; wins[w.name] = (wins[w.name] || 0) + 1; types[spec] = (types[spec] || 0) + 1;
+  }
+  console.table(Object.entries(wins).sort((a, b) => b[1] - a[1]).map(([name, victoires]) => ({ name, victoires }))); console.table(types);
+  return { wins, types };
 }

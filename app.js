@@ -233,6 +233,7 @@ async function continueGame() {
     const { error } = await sb.from('game_state').update({ game_date: d.toISOString().slice(0, 10) }).eq('id', 1);
     if (error) return toast(error.message);
     const o = await sb.rpc('advance_observations');
+    await runAiClubs(1).catch((e) => console.warn('IA des clubs : ' + e.message));
     const te = await applyTrainingEffects(1, state.game.game_date).catch((e) => ({ error: e.message }));
     toast((o.error ? 'Jour suivant (observations : ' + o.error.message + ')' : 'Jour suivant.') + (te?.error ? ' Entraînement : ' + te.error : te ? ` Entraînement : +${te.gains} pt(s) d'attributs, ${te.injuries} blessure(s).` : ''));
   } else toast("Seul l'administrateur fait avancer le temps : date synchronisée.");
@@ -1264,6 +1265,13 @@ async function renderNews(c) {
     const who = club[o.observer_ai_id || o.observer_team_id] || 'Un club', rn = `${o.riders.first_name} ${o.riders.last_name}`, own = ids.includes(o.riders.team_id);
     rumors.push({ title: own ? `${who} convoite ${rn}` : `${who} s'intéresse à ${rn}`, text: own ? 'Un de vos coureurs attire l\'attention : sa situation contractuelle peut devenir un sujet.' : `${rn}, ${o.riders.age} ans (${tn[o.riders.team_id] || 'libre'}), est suivi de près par ${who}.`, tag: 'Rumeur', rider: o.riders.id, badge: '?', cls: own ? 'mine' : '' });
   });
+    const { data: dl } = await sb.from('ai_deals').select('*, riders(id, first_name, last_name, age, team_id)').order('created_at', { ascending: false }).limit(80);
+  (dl || []).forEach((o) => {
+    if (!o.riders) return; const rn = `${o.riders.first_name} ${o.riders.last_name}`, who = tn[o.team_id] || 'Un club';
+    if (o.status === 'APPLIED') signed.push({ title: `${rn} signe à ${who}`, text: `Contrat de ${o.years} an(s), ${fmtEUR(o.salary || 0)} / mois.`, tag: 'Officialisé', rider: o.riders.id, badge: '✔' });
+    else if (o.status === 'AGREED') rumors.push({ title: `${rn} proche de ${who}`, text: `Accord de principe : arrivée prévue le ${fmtShort(o.effective_date)} (${o.years} an(s)).`, tag: 'Rumeur', rider: o.riders.id, badge: '€' });
+    else if (o.status === 'TARGET') rumors.push({ title: `${who} s'intéresse à ${rn}`, text: `${rn}, ${o.riders.age} ans, correspond au profil recherché par ${who}.`, tag: 'Rumeur', rider: o.riders.id, badge: '?' });
+  });
   const byDate = (a, b) => String(b.date || '').localeCompare(String(a.date || ''));
   mine.sort(byDate); world.sort(byDate);
 
@@ -1472,6 +1480,65 @@ async function applyTeamTheme(team) {
   set('a', hsl(h, s, bL * (light ? 0.9 : 0.62))); set('b', hsl(h, s, bL)); set('c', hsl(h, s, bL * (light ? 0.94 : 0.82)));
   set('row2', hsl(h, Math.min(s, 45), 10)); set('acc', hsl(h, Math.max(s, 70), light ? bL : 66));
   set('txt', light ? '#111827' : '#ffffff'); set('dim', light ? 'rgba(17,24,39,.78)' : 'rgba(255,255,255,.72)'); set('field', light ? 'rgba(0,0,0,.14)' : 'rgba(0,0,0,.28)'); set('line', light ? '#111827' : hsl(h, 90, 82));
+}
+/* ===== IA des équipes non joueurs : budget, staff, profils de recrutement ===== */
+const AI_NORD = { NO: 50, DK: 30, SE: 3.3, FI: 3.3, IS: 3.4, EE: 1.3, LV: 1.3, LT: 1.4, '*': 1 };
+const AI_DNA = [
+  [/uno.?x/i, { nat: AI_NORD, age: [26, 5], spec: { FLA: 1, SPR: 0.9, VAL: 0.8, PST: 0.7, CLM: 0.6, EQP: 0.6, MTN: 0.45 } }],
+  [/unibet|rose rocket/i, { nat: { BE: 3, NL: 3, '*': 1 }, age: [31, 4], spec: { SPR: 1, VAL: 1, FLA: 0.9, PST: 0.6, CLM: 0.5, EQP: 0.6, MTN: 0.15 } }],
+  [/uae|emirates/i, { nat: { SI: 3, '*': 1 }, age: [26, 5], spec: { MTN: 1, CLM: 0.8, PST: 0.8, VAL: 0.7, FLA: 0.6, SPR: 0.35, EQP: 0.5 } }],
+  [/visma|lease a bike/i, { nat: { NL: 3, BE: 2, DK: 1.5, '*': 1 }, age: [27, 5], spec: { MTN: 0.9, CLM: 0.9, PST: 0.9, VAL: 0.8, FLA: 0.7, SPR: 0.5, EQP: 0.6 } }],
+  [/soudal|quick.?step/i, { nat: { BE: 4, '*': 1 }, age: [28, 5], spec: { FLA: 1, SPR: 0.9, VAL: 0.9, CLM: 0.7, PST: 0.6, MTN: 0.3, EQP: 0.5 } }],
+  [/decathlon|ag2r|cofidis|total|groupama/i, { nat: { FR: 4, '*': 1 }, age: [27, 5], spec: { VAL: 1, PST: 0.9, MTN: 0.8, FLA: 0.7, SPR: 0.6, CLM: 0.5, EQP: 0.6 } }],
+  [/astana/i, { nat: { KZ: 3, RU: 1.5, '*': 1 }, age: [27, 5], spec: { MTN: 1, PST: 0.8, VAL: 0.7, CLM: 0.6, SPR: 0.5, FLA: 0.5, EQP: 0.6 } }],
+];
+function aiDna(t) {
+  const hit = AI_DNA.find(([re]) => re.test(t.official_name || t.name)), dev = t.category === 'DEV' || !!t.parent_team_id;
+  const base = hit ? hit[1] : { nat: { [t.nationality]: 4, '*': 1 }, age: [27, 5], spec: {} };
+  return dev ? { ...base, age: [21, 2.2] } : base;   // équipe de développement : jeunes
+}
+// Adéquation d'un coureur à une équipe : nationalité × âge × type de coureur × niveau proche de celui de l'équipe (les petites équipes ne visent pas les stars)
+function aiScore(dna, r, tl) {
+  const w = dna.nat[r.nationality] ?? dna.nat['*'] ?? 1, nat = Math.sqrt(w / Math.max(...Object.values(dna.nat)));
+  const age = Math.exp(-0.5 * (((r.age || 27) - dna.age[0]) / dna.age[1]) ** 2), spec = dna.spec[r.spec] ?? 0.8, lv = Math.exp(-0.5 * (((r.level || 55) - (tl + 3)) / 7) ** 2);
+  return nat * age * spec * lv;
+}
+async function runAiClubs(days = 1) {
+  if (!state.isAdmin) return null;
+  const g = state.game, today = g.game_date, yr = g.season_year, month = +today.slice(5, 7);
+  const [tm, st, pf, dl, rows] = await Promise.all([
+    sb.from('teams').select('id, name, official_name, division, category, nationality, manager_id, parent_team_id'), sb.from('staff').select('team_id, monthly_salary'),
+    sb.from('team_ai_profiles').select('*'), sb.from('ai_deals').select('*').in('status', ['TARGET', 'AGREED']), riLoadAll('riders', '*'),
+  ]);
+  const all = tm.data || [], mgr = new Set(all.filter((t) => t.manager_id).map((t) => t.id)), pl = new Set([...mgr, ...all.filter((t) => mgr.has(t.parent_team_id)).map((t) => t.id)]);
+  const ai = all.filter((t) => !pl.has(t.id)), R = enrich(rows, today), byTeam = {}; R.forEach((r) => (byTeam[r.team_id] = byTeam[r.team_id] || []).push(r));
+  const staffPay = {}; (st.data || []).forEach((x) => (staffPay[x.team_id] = (staffPay[x.team_id] || 0) + Number(x.monthly_salary || 0)));
+  const prof = Object.fromEntries((pf.data || []).map((x) => [x.team_id, x])), open = dl.data || [], taken = new Set(open.filter((d) => d.status === 'AGREED').map((d) => d.rider_id));
+  const FLOOR = { WORLD_TOUR: 2500000, PRO_TEAM: 900000, CONTINENTAL: 250000 }, salOf = (r) => Number(r.contract_salary) || Math.round((1500 * Math.pow(1.12, (r.level || 55) - 50)) / 100) * 100;
+  const free = R.filter((r) => !r.team_id), expiring = R.filter((r) => r.team_id && !pl.has(r.team_id) && r.contract_end_year != null && r.contract_end_year <= yr);
+  const newDeals = [], newProf = [];
+  for (const t of ai) {
+    if (Math.random() > 0.25 * days) continue;   // chaque équipe agit environ un jour sur quatre
+    const sq = byTeam[t.id] || [], dev = t.category === 'DEV' || !!t.parent_team_id, max = dev ? 16 : { WORLD_TOUR: 30, PRO_TEAM: 26 }[t.division] || 20;
+    const pay = sq.reduce((s, r) => s + salOf(r), 0) + (staffPay[t.id] || 0);
+    let p = prof[t.id]; if (!p) { p = { team_id: t.id, payroll_cap: Math.max(FLOOR[t.division] || 250000, Math.round(pay * 1.08)) }; newProf.push(p); }   // plafond = masse salariale actuelle + 8 %
+    const mineOpen = open.filter((d) => d.team_id === t.id), agreed = mineOpen.filter((d) => d.status === 'AGREED').length;
+    const kept = sq.filter((r) => r.contract_end_year == null || r.contract_end_year > yr).length, slots = max - kept - agreed;
+    if (slots <= 0) continue;
+    const top = sq.map((r) => r.level || 55).sort((a, b) => b - a).slice(0, 7), tl = top.length ? top.reduce((s, x) => s + x, 0) / top.length : 55, dna = aiDna(t);
+    const pool = (month >= 8 ? [...free, ...expiring.filter((r) => r.team_id !== t.id)] : free).filter((r) => !taken.has(r.id) && (!dev || (r.age || 30) <= 22));
+    const cand = pool.map((r) => [r, salOf(r)]).filter(([r, s]) => s <= p.payroll_cap * 0.16 && pay + s <= p.payroll_cap).map(([r, s]) => [r, s, aiScore(dna, r, tl)]).filter((x) => x[2] > 0.04).sort((a, b) => b[2] - a[2]);
+    if (!cand.length) continue;
+    const [r, s, sc] = cand[Math.floor(Math.random() * Math.min(3, cand.length))], years = (r.age || 27) <= 24 ? 3 : (r.age || 27) <= 31 ? 2 : 1, sal = Math.round((s * (r.team_id ? 1.08 : 1)) / 100) * 100;
+    taken.add(r.id);
+    newDeals.push({ team_id: t.id, rider_id: r.id, status: 'AGREED', salary: sal, years, end_year: yr + years, effective_date: r.team_id ? `${yr + 1}-01-01` : today, score: sc });   // libre : immédiat · en fin de contrat : au 1er janvier
+    if (mineOpen.filter((d) => d.status === 'TARGET').length < 3 && cand[1]) newDeals.push({ team_id: t.id, rider_id: cand[1][0].id, status: 'TARGET', score: cand[1][2] });   // piste évoquée dans les rumeurs
+  }
+  if (newProf.length) await sb.from('team_ai_profiles').upsert(newProf, { onConflict: 'team_id' });
+  if (newDeals.length) await sb.from('ai_deals').insert(newDeals);
+  await sb.from('ai_deals').delete().eq('status', 'TARGET').lt('created_at', new Date(Date.now() - 60 * 864e5).toISOString());
+  const { data: applied } = await sb.rpc('apply_ai_deals', { p_date: today });
+  return { deals: newDeals.length, applied: applied || 0 };
 }
 // ---------- Démarrage ----------
 (async function boot() {

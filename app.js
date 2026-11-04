@@ -243,7 +243,7 @@ async function continueGame() {
 function viewGame() {
   const t = state.team, g = state.game, d = gd(g.game_date);
     applyTeamTheme(t);
-  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes'], ['racemgr', 'Admin : courses & tags'], ['riderimp', 'Admin : import coureurs']);
+  const subs = [...MENUS[state.menu].subs]; if (state.menu === 'club' && state.isAdmin) subs.push(['admin', 'Admin'], ['stageimp', 'Admin : étapes'], ['racemgr', 'Admin : courses & tags'], ['riderimp', 'Admin : import coureurs'], ['stagelib', 'Admin : bibliothèque d\'étapes']);
   const quick = [['portal|messages', 'Messages'], ['squad|squad', 'Équipe première'], ['recruit|search', 'Base de données cyclistes'], ['recruit|market', 'Marché des transferts'], ['portal|competitions', 'Compétitions']];
   const nr = state.nextRace, n = nr ? daysUntil(nr.date) : null;
   $app.innerHTML = `
@@ -278,6 +278,7 @@ async function renderTab() {
   if (tab === 'competitions') return renderLiveRaceDashboard(c);
   if (tab === 'stageimp') return renderStageImport(c);
   if (tab === 'riderimp') return renderRiderImport(c);
+  if (tab === 'stagelib') return renderStageLibrary(c);
   if (tab === 'racemgr') return renderRaceManager(c);
   if (tab === 'calendar') return renderCalendar(c);
   if (tab === 'info') return renderNews(c);

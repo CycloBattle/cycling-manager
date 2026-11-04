@@ -677,3 +677,60 @@ async function renderRaceManager(c) {
   $('rm-apply').onclick = () => { const t = siTag($('rm-tag').value); if (!t) return toast('Saisissez un tag (ex. #tdf2026).'); save(t); };
   $('rm-clear').onclick = () => save(null);
 }
+/* ===== Admin : bibliothèque d'étapes (dossier « bibliotheque » créé par le script Python) ===== */
+function slBuild(j, name) {
+  const dist = j.distance_km, cols = j.cols || [];
+  const icons = cols.map((q) => ({ kind: 'climb', f: Math.min(1, q.km_sommet / dist), km: q.km_sommet, cat: q.categorie, name: '', len: q.longueur_km, grad: q.pente_moyenne_pct, m: true }));
+  const ns = dist > 170 ? 2 : dist > 70 ? 1 : 0, fr = ns === 2 ? [0.33, 0.66] : [0.5];
+  fr.slice(0, ns).forEach((f) => {   // sprints intermédiaires : placés hors des cols
+    let k = dist * f, t = 0; while (cols.some((q) => k >= q.km_debut - 0.5 && k <= q.km_sommet + 1.5) && t++ < 40) k += 1.5;
+    k = Math.min(k, dist - 6); icons.push({ kind: 'sprint', f: k / dist, km: +k.toFixed(1), cat: null, name: '', m: true });
+  });
+  const D = { km: dist, altMin: j.alt_min, altMax: j.alt_max, points: j.points, cobbles: [], marks: [], icons, manual: true, anchors: [], calibrated: true };
+  const P = simProfileFromData({ name, distance_km: dist, profile_type: 'FLAT', profile_data: D }), asc = P.climbs.reduce((s, x) => s + x.gain, 0);
+  const type = asc / dist < 8 ? 'FLAT' : asc / dist < 22 ? 'HILLS' : 'MOUNTAIN';
+  return { D: { ...D, type }, type, asc };
+}
+
+async function renderStageLibrary(c) {
+  c.innerHTML = '<p class="muted pad">Chargement de la bibliothèque…</p>';
+  const get = async (f) => { const r = await fetch('bibliotheque/' + f + '?v=' + Date.now()); if (!r.ok) throw new Error(f + ' : erreur ' + r.status); return r.json(); };
+  let idx;
+  try { idx = (await get('index_courses.json')).courses || []; }
+  catch (e) { c.innerHTML = `<div class="panel"><h4>Admin : bibliothèque d'étapes</h4><p class="err">${esc(e.message)}. Le dossier « bibliotheque » doit être envoyé sur GitHub, à côté de index.html.</p></div>`; return; }
+  const CATS = ['1.1', '1.Pro', '1.UWT', '2.1', '2.Pro', '2.UWT'].map((x) => [x, x]), norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const chosen = new Set(), lots = {};
+  c.innerHTML = `<div class="panel"><h4>Admin : bibliothèque d'étapes (${idx.length})</h4>
+    <div class="adm-grid"><div><label>Rechercher</label><input id="sl-q" placeholder="Nom de l'étape"></div><div><label>Date de la première étape</label><input id="sl-date" type="date" value="${state.game.game_date}"></div>
+      <div><label>Jours entre deux étapes</label><input id="sl-step" type="number" min="0" value="1"></div><div><label>Catégorie</label>${selHtml('sl-cat', CATS, '1.1')}</div><div><label>Tag</label><input id="sl-tag" placeholder="#tdf2026"></div></div>
+    <div class="muted" id="sl-n" style="margin:.5rem 0"></div>
+    <div class="tbl" style="max-height:50vh"><table class="fm sq"><thead><tr><th><input type="checkbox" id="sl-all"></th><th>Étape</th><th>Km</th><th>Dénivelé</th><th>Altitude</th><th>Cols</th></tr></thead><tbody id="sl-body"></tbody></table></div>
+    <div class="err" id="sl-err"></div><div class="muted" id="sl-st"></div><div class="rov-btns"><button id="sl-go">Ajouter les étapes cochées au calendrier</button></div></div>`;
+  const shown = () => { const q = norm($('sl-q').value); return idx.filter((x) => !q || norm(x.nom).includes(q)).slice(0, 200); };
+  const draw = () => {
+    const rows = shown();
+    $('sl-body').innerHTML = rows.map((x) => `<tr><td><input type="checkbox" data-sl="${x.id}" ${chosen.has(x.id) ? 'checked' : ''}></td><td>${esc(x.nom)}</td><td>${x.distance_km}</td><td>${x.denivele_positif_m} m</td><td>${x.alt_min}-${x.alt_max} m</td><td>${x.nb_cols}</td></tr>`).join('') || '<tr><td colspan="6" class="muted">Aucune étape.</td></tr>';
+    $('sl-n').textContent = `${rows.length} étape(s) affichée(s) (200 maximum) · ${chosen.size} cochée(s)`;
+  };
+  $('sl-q').oninput = draw;
+  $('sl-body').onchange = (e) => { const b = e.target.closest('[data-sl]'); if (b) { b.checked ? chosen.add(+b.dataset.sl) : chosen.delete(+b.dataset.sl); draw(); } };
+  $('sl-all').onchange = (e) => { shown().forEach((x) => (e.target.checked ? chosen.add(x.id) : chosen.delete(x.id))); draw(); };
+  $('sl-go').onclick = async () => {
+    const sel = idx.filter((x) => chosen.has(x.id)), err = $('sl-err'); err.textContent = '';
+    if (!sel.length) return (err.textContent = 'Cochez au moins une étape.');
+    if (!$('sl-date').value) return (err.textContent = 'Indiquez la date de la première étape.');
+    $('sl-go').disabled = true; const bad = []; let ok = 0;
+    for (let i = 0; i < sel.length; i++) {
+      const row = sel[i]; $('sl-st').textContent = `Ajout ${i + 1} / ${sel.length} : ${row.nom}`;
+      try {
+        lots[row.lot] = lots[row.lot] || await get(row.lot);
+        const j = lots[row.lot][row.rang], { D, type, asc } = slBuild(j, row.nom);
+        const { error } = await sb.from('races').insert({ name: row.nom, date: trnAdd($('sl-date').value, i * (+$('sl-step').value || 0)), status: 'SCHEDULED', profile_type: type, distance_km: Math.round(j.distance_km), elevation_m: Math.round(asc), category: $('sl-cat').value, travel_km: 0, tag: siTag($('sl-tag').value), profile_data: D });
+        if (error) throw new Error(error.message); ok++;
+      } catch (e) { bad.push(`${row.nom} : ${e.message}`); }
+    }
+    $('sl-st').textContent = ''; $('sl-go').disabled = false; await loadGame();
+    err.innerHTML = bad.length ? esc(bad.slice(0, 5).join(' · ')) : ''; toast(`${ok} étape(s) ajoutée(s) au calendrier${bad.length ? ', ' + bad.length + ' échec(s)' : ''}.`);
+  };
+  draw();
+}
